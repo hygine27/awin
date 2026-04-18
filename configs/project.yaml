@@ -1,0 +1,13 @@
+project_name: awin
+project_name_cn: A视界
+storage:
+  sqlite_path: data/sqlite/awin.db
+runtime:
+  timezone: Asia/Shanghai
+  default_market: CN-A
+mvp:
+  core_tables:
+    - monitor_run
+    - stock_snapshot
+  optional_tables:
+    - alert_log

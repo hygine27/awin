@@ -1,0 +1,30 @@
+# Local environment and secrets
+.env
+.env.*
+
+# Python caches and build artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# IDE / OS noise
+.DS_Store
+.idea/
+.vscode/
+
+# Local runtime outputs
+data/sqlite/
+data/replay/
+data/exports/
+
+# Local script and test byproducts
+scripts/__pycache__/
+tests/__pycache__/

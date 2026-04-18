@@ -1,0 +1,11 @@
+name: awin-py312
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pytest
+  - pandas
+  - pip:
+      - -e .
+      - psycopg[binary]>=3.2,<4
