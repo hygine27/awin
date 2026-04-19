@@ -4,6 +4,12 @@
 
 ## In Progress
 
+- YAML 配置收口第一轮 review
+  目标：把 `market_style_baskets / ths_concept_overlay / style_profile_rules / opportunity_rules / risk_rules` 从“能跑”提升到“业务可 review、定义完整、注释充分”
+- 补 `ths_concept_overlay.v1.yaml` 的业务定义
+  目标：明确“元主题”的定义、用途、与风格/概念的区别，并说明当前配置是第一阶段监控白名单，不是全市场完整主线字典
+- 补 `market_style_baskets.v1.yaml` 的风格维度
+  目标：从“行业+板块近似”升级为包含大小盘、红利/成长、央国企/民企、低波/高弹性的完整风格定义
 - 将 replay / evaluation 从 JSON 输出升级为 markdown 业务摘要
 - 基于 `stg.qmt_bar_1d` 落地 post-trade evaluation 的行情来源与收益口径
 - 将 `catchup` 末位排序差异从“单样本微调”转成“多交易日、多时点横向验证”
@@ -53,6 +59,12 @@
   目标：明确 overheat、warning、avoid、laggard 的状态口径
 - 定义股票状态机第一版
   目标：明确 observation、confirmed、warning、overheat 等状态及迁移条件
+- 补 `ths_concept_overlay.v1.yaml` 的主线覆盖范围
+  目标：在现有 6 组之外，补全金融修复、核电电力设备、消费电子/果链、创新药、黄金有色、自主可控/信创等元主题，并明确每组下的概念池
+- 补 `meta_to_style_hint` 的业务注释和覆盖范围
+  目标：明确它只是候选打分时的风格提示项，不是权威分类字典；同时检查是否需要扩展更多主线到风格的映射
+- 补 `core_anchor / new_long / catchup / warning / weak / overheat` 的中文业务释义
+  目标：减少 YAML 中的工程化英文术语，让业务 review 时能直接理解每个 bucket 的交易含义
 
 ### P0 输出与提醒
 
@@ -87,6 +99,8 @@
   目标：规划财报、研报、行业一页纸、知识星球等来源的接入顺序
 - 设计更多增强型数据源的接入方案
   目标：规划北向、ETF 资金流、股指期货基差、题材催化事件流等增强层
+- 删除未启用的旧版 JSON 规则文件
+  目标：在 YAML 配置稳定后移除 `configs/*.v1.json`，避免目录内长期并存两套规则格式
 
 ## Done
 
@@ -143,9 +157,9 @@
   - `ThsConceptAdapter`
   - `ResearchCoverageAdapter`
 - 为 QMT / DCF adapter 补充 SQL contract 和无连接降级逻辑
-  - `QmtSnapshotAdapter.build_query/load_rows`
-  - `DcfSnapshotAdapter.build_query/load_rows`
-  - `DcfSnapshotAdapter.evaluate_guard/load_rows_with_health`
+  - `QmtAshareSnapshot5mAdapter.build_query/load_rows`
+  - `DcfHqZjSnapshotAdapter.build_query/load_rows`
+  - `DcfHqZjSnapshotAdapter.evaluate_guard/load_rows_with_health`
 - 实现 `market_understanding` 第一版单轮逻辑
   - `src/awin/market_understanding/engine.py`
 - 增加 source smoke script
@@ -205,3 +219,33 @@
   - `python3 scripts/run_once.py --trade-date 2026-04-16 --snapshot-time 10:35:00 --round-seq 1`
 - 验证 `run_once` dry-run 在引入 M0 协议代码后仍可执行
   - `python3 scripts/run_once.py --dry-run`
+- 完成 adapter 命名收口
+  - `qmt_ashare_snapshot_5m.py`
+  - `dcf_hq_zj_snapshot.py`
+  - adapter 名称与真实物理来源保持一致
+- 完成 `style_profile` 第一版落地
+  - 增加 `style_profile` 表
+  - 增加 `src/awin/style_profile/` 引擎与持久化
+  - 大小盘 / 容量 / 产权 / 行业风格标签改为独立慢变量层
+- 将 `style_profile` 业务规则移出代码
+  - 新增 `configs/style_profile_rules.v1.yaml`
+  - 产权映射、容量分桶、补充风格标签由配置驱动
+- 将 `opportunity_discovery` 业务规则进一步移出代码
+  - 新增并扩展 `configs/opportunity_rules.v1.yaml`
+  - `concept_priority`
+  - `theme_context_rules`
+  - `novelty_rules`
+  - `long_score_rules`
+  - `bucket_rules`
+  - `catchup_rules`
+  - Python 侧改为“按配置解释规则”，不再内嵌大段分段阈值
+- 将 `risk_surveillance` 业务规则进一步移出代码
+  - 新增并扩展 `configs/risk_rules.v1.yaml`
+  - `overheat_rules.regime / stretch / relative / research / tape / persistence / entry_gates`
+  - 过热、warning、weak 的主要阈值和加减分改由配置驱动
+- 修复 `catchup` 评分阶段的变量使用顺序风险
+  - 在第二轮筛选前显式重算 `range_position / pct / previous_bucket`
+  - 避免依赖前一轮循环残留值
+- 完成本轮回归验证
+  - `conda run -n awin-py312 python -m pytest /home/yh/.openclaw/workspace/projects/awin/tests -q`
+  - 当前全量测试 `47 passed`
