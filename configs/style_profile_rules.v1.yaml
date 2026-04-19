@@ -1,0 +1,53 @@
+# 慢变量风格画像规则。
+# 用于把单只股票映射到容量、产权、大小盘等稳定标签。
+ownership:
+  default_label: 未识别
+  rules:
+    - label: 央国企
+      match_any: [国有, 央企, 国企]
+    - label: 民企
+      match_any: [民营, 私营, 自然人, 个人]
+    - label: 混合属性
+      match_any: [外商, 港澳台, 合资, 混合, 集体, 公众]
+
+size_bucket_abs_rules:
+  - label: 超大盘
+    min_float_mv: 10000000
+  - label: 大盘
+    min_float_mv: 3000000
+  - label: 中盘
+    min_float_mv: 1000000
+  - label: 小盘
+    min_float_mv: 300000
+  - label: 微盘
+    min_float_mv: 0
+
+capacity_bucket_rules:
+  - label: 机构核心容量
+    min_float_mv: 3000000
+  - label: 机构可做容量
+    min_float_mv: 1000000
+  - label: 中小票
+    min_float_mv: 300000
+  - label: 微盘弹性
+    min_float_mv: 0
+
+size_bucket_pct_rules:
+  - label: 超大盘
+    min_rank_pct: 0.9
+  - label: 大盘
+    min_rank_pct: 0.75
+  - label: 中盘
+    min_rank_pct: 0.4
+  - label: 小盘
+    min_rank_pct: 0.1
+  - label: 微盘
+    min_rank_pct: 0.0
+
+# 复合风格标签。
+composite_label_rules:
+  - label: 金融地产链
+    sw_l1_names: [非银金融, 银行, 房地产, 建筑材料, 建筑装饰]
+  - label: 小盘题材
+    size_bucket_pct_in: [小盘, 微盘]
+    capacity_bucket_in: [微盘弹性]

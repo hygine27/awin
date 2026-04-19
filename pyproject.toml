@@ -9,6 +9,7 @@ description = "A-share investment insight platform MVP scaffold"
 requires-python = ">=3.11"
 dependencies = [
     "psycopg[binary]>=3.2,<4",
+    "PyYAML>=6,<7",
 ]
 
 [tool.setuptools]

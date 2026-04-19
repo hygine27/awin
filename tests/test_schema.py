@@ -31,6 +31,7 @@ class SchemaTestCase(unittest.TestCase):
             self.assertIn("monitor_run", table_names)
             self.assertIn("stock_snapshot", table_names)
             self.assertIn("alert_log", table_names)
+            self.assertIn("style_profile", table_names)
 
     def test_write_monitor_run_inserts_one_row(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -87,6 +88,10 @@ class SchemaTestCase(unittest.TestCase):
                     row["name"]
                     for row in connection.execute("PRAGMA table_info(stock_snapshot)").fetchall()
                 }
+                style_profile_columns = {
+                    row["name"]
+                    for row in connection.execute("PRAGMA table_info(style_profile)").fetchall()
+                }
 
             self.assertIn("trade_date", monitor_columns)
             self.assertIn("coverage_ratio", monitor_columns)
@@ -96,6 +101,10 @@ class SchemaTestCase(unittest.TestCase):
             self.assertIn("is_new_long", snapshot_columns)
             self.assertIn("is_catchup", snapshot_columns)
             self.assertIn("is_short", snapshot_columns)
+            self.assertIn("market_type_label", style_profile_columns)
+            self.assertIn("ownership_style", style_profile_columns)
+            self.assertIn("size_bucket_pct", style_profile_columns)
+            self.assertIn("composite_style_labels_json", style_profile_columns)
 
 
 if __name__ == "__main__":

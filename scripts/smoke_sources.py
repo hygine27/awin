@@ -13,8 +13,8 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from awin.adapters import (
-    DcfSnapshotAdapter,
-    QmtSnapshotAdapter,
+    DcfHqZjSnapshotAdapter,
+    QmtAshareSnapshot5mAdapter,
     ResearchCoverageAdapter,
     SnapshotRequest,
     StockMasterAdapter,
@@ -47,15 +47,15 @@ def main() -> None:
     stock_master_adapter = StockMasterAdapter()
     ths_adapter = ThsConceptAdapter()
     research_adapter = ResearchCoverageAdapter()
-    qmt_adapter = QmtSnapshotAdapter()
-    dcf_adapter = DcfSnapshotAdapter()
+    qmt_ashare_snapshot_5m_adapter = QmtAshareSnapshot5mAdapter()
+    dcf_hq_zj_snapshot_adapter = DcfHqZjSnapshotAdapter()
     market_overview_adapter = ThsMarketOverviewAdapter()
 
     stock_master = stock_master_adapter.load_rows()
     ths_concepts = ths_adapter.load_rows(request)
     research = research_adapter.load_rows(request)
-    qmt_rows = qmt_adapter.load_rows(request)
-    dcf_rows, dcf_health = dcf_adapter.load_rows_with_health(request)
+    qmt_rows = qmt_ashare_snapshot_5m_adapter.load_rows(request)
+    dcf_rows, dcf_health = dcf_hq_zj_snapshot_adapter.load_rows_with_health(request)
     market_tape = market_overview_adapter.load_market_tape()
 
     market_output = compute_market_understanding(stock_master, qmt_rows, dcf_rows, ths_concepts, market_tape=market_tape)
@@ -73,8 +73,8 @@ def main() -> None:
             "stock_master": stock_master_adapter.health().to_dict(),
             "ths_concepts": ths_adapter.health().to_dict(),
             "research": research_adapter.health().to_dict(),
-            "qmt": qmt_adapter.health().to_dict(),
-            "dcf": dcf_health.to_dict(),
+            "qmt_ashare_snapshot_5m": qmt_ashare_snapshot_5m_adapter.health().to_dict(),
+            "dcf_hq_zj_snapshot": dcf_health.to_dict(),
             "ths_market_overview": market_overview_adapter.health().to_dict(),
         },
         "source_counts": {

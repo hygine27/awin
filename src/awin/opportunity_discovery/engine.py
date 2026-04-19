@@ -4,23 +4,19 @@ from dataclasses import dataclass
 
 from awin.analysis import StockFact
 from awin.contracts.m0 import CandidateItem, MarketUnderstandingOutput, OpportunityDiscoveryOutput
+from awin.opportunity_discovery.config import load_opportunity_rules
 
 
-LONG_SCORE_CAPS = {
-    "alignment": 2.5,
-    "dual_support": 2.0,
-    "temperature": 2.0,
-    "research": 1.5,
-    "tape": 2.0,
-}
-META_TO_STYLE_HINT = {
-    "AI算力": "科技成长",
-    "光通信_CPO": "科技成长",
-    "半导体": "科技成长",
-    "机器人": "科技成长",
-    "电网储能": "顺周期",
-    "商业航天低空": "科技成长",
-}
+OPPORTUNITY_RULES = load_opportunity_rules()
+LONG_SCORE_CAPS = OPPORTUNITY_RULES["long_score_caps"]
+META_TO_STYLE_HINT = OPPORTUNITY_RULES["meta_to_style_hint"]
+CONCEPT_PRIORITY_RULES = OPPORTUNITY_RULES["concept_priority"]
+THEME_CONTEXT_RULES = OPPORTUNITY_RULES["theme_context_rules"]
+NOVELTY_RULES = OPPORTUNITY_RULES["novelty_rules"]
+LONG_SCORE_RULES = OPPORTUNITY_RULES["long_score_rules"]
+REPEAT_RULES = OPPORTUNITY_RULES["repeat_rules"]
+BUCKET_RULES = OPPORTUNITY_RULES["bucket_rules"]
+CATCHUP_RULES = OPPORTUNITY_RULES["catchup_rules"]
 
 
 @dataclass(frozen=True)
@@ -37,35 +33,46 @@ class PreviousBullState:
     consecutive_repeat: bool = False
 
 
-RECENT_ROUND_GAP_LIMIT = 2
-ANCHOR_MIN_CONSECUTIVE = 3
-ANCHOR_MIN_APPEARANCES = 4
-ANCHOR_MIN_SCORE = 9.0
-NEW_NAME_BONUS = 0.6
-REPEAT_PENALTY_BASE = 0.8
-REPEAT_PENALTY_STEP = 0.4
-MAX_REPEAT_PENALTY = 2.4
-EVIDENCE_BONUS = 0.4
-PROMINENT_REPEAT_NOVELTY = 0.35
-HIGH_QUALITY_REPEAT_MIN_LONG_SCORE = 8.8
-HIGH_QUALITY_REPEAT_MIN_NOVELTY = 0.15
-HIGH_QUALITY_REPEAT_BONUS = 0.6
-TREND_BACKBONE_CONTINUITY_BONUS = 2.0
-DEEP_PULLBACK_CATCHUP_PENALTY = 0.6
-MAINLINE_PRIMARY_CONCEPT_BONUS = 0.15
-CATCHUP_UPGRADE_GUARD_PENALTY = 0.25
-NEGATIVE_MAIN_FLOW_CATCHUP_PENALTY = 0.35
-NEGATIVE_RET3_CATCHUP_PENALTY = 0.6
-FRESH_CATCHUP_DISCOVERY_BONUS = 0.45
-WEAK_REPEAT_NEW_LONG_CATCHUP_PENALTY = 0.4
+RECENT_ROUND_GAP_LIMIT = int(REPEAT_RULES["recent_round_gap_limit"])
+ANCHOR_MIN_CONSECUTIVE = int(REPEAT_RULES["anchor_min_consecutive"])
+ANCHOR_MIN_APPEARANCES = int(REPEAT_RULES["anchor_min_appearances"])
+ANCHOR_MIN_SCORE = float(REPEAT_RULES["anchor_min_score"])
+NEW_NAME_BONUS = float(REPEAT_RULES["new_name_bonus"])
+REPEAT_PENALTY_BASE = float(REPEAT_RULES["repeat_penalty_base"])
+REPEAT_PENALTY_STEP = float(REPEAT_RULES["repeat_penalty_step"])
+MAX_REPEAT_PENALTY = float(REPEAT_RULES["max_repeat_penalty"])
+EVIDENCE_BONUS = float(REPEAT_RULES["evidence_bonus"])
+PROMINENT_REPEAT_NOVELTY = float(REPEAT_RULES["prominent_repeat_novelty"])
+HIGH_QUALITY_REPEAT_MIN_LONG_SCORE = float(REPEAT_RULES["high_quality_repeat_min_long_score"])
+HIGH_QUALITY_REPEAT_MIN_NOVELTY = float(REPEAT_RULES["high_quality_repeat_min_novelty"])
+HIGH_QUALITY_REPEAT_BONUS = float(REPEAT_RULES["high_quality_repeat_bonus"])
+TREND_BACKBONE_CONTINUITY_BONUS = float(CATCHUP_RULES["trend_backbone_continuity_bonus"])
+DEEP_PULLBACK_CATCHUP_PENALTY = float(CATCHUP_RULES["deep_pullback_catchup_penalty"])
+MAINLINE_PRIMARY_CONCEPT_BONUS = float(CATCHUP_RULES["mainline_primary_concept_bonus"])
+CATCHUP_UPGRADE_GUARD_PENALTY = float(CATCHUP_RULES["catchup_upgrade_guard_penalty"])
+NEGATIVE_MAIN_FLOW_CATCHUP_PENALTY = float(CATCHUP_RULES["negative_main_flow_catchup_penalty"])
+NEGATIVE_RET3_CATCHUP_PENALTY = float(CATCHUP_RULES["negative_ret3_catchup_penalty"])
+FRESH_CATCHUP_DISCOVERY_BONUS = float(CATCHUP_RULES["fresh_catchup_discovery_bonus"])
+WEAK_REPEAT_NEW_LONG_CATCHUP_PENALTY = float(CATCHUP_RULES["weak_repeat_new_long_catchup_penalty"])
 
 
 def _concept_priority(market: MarketUnderstandingOutput) -> dict[str, float]:
     priority: dict[str, float] = {}
+    strongest_rules = CONCEPT_PRIORITY_RULES["strongest"]
+    acceleration_rules = CONCEPT_PRIORITY_RULES["acceleration"]
     for idx, concept in enumerate(market.strongest_concepts, start=1):
-        priority[concept] = max(0.2, 1.0 - (idx - 1) * 0.12)
+        priority[concept] = max(
+            float(strongest_rules["floor"]),
+            float(strongest_rules["start"]) - (idx - 1) * float(strongest_rules["step"]),
+        )
     for idx, concept in enumerate(market.acceleration_concepts, start=1):
-        priority[concept] = max(priority.get(concept, 0.0), max(0.28, 0.96 - (idx - 1) * 0.10))
+        priority[concept] = max(
+            priority.get(concept, 0.0),
+            max(
+                float(acceleration_rules["floor"]),
+                float(acceleration_rules["start"]) - (idx - 1) * float(acceleration_rules["step"]),
+            ),
+        )
     return priority
 
 
@@ -125,6 +132,41 @@ def _clamp01(value: float | None) -> float:
 
 def _safe(value: float | None, default: float = 0.0) -> float:
     return default if value is None else float(value)
+
+
+def _band_score_by_min(value: float, bands: list[dict[str, float]]) -> float:
+    for band in bands:
+        if value >= float(band["min"]):
+            return float(band["score"])
+    return 0.0
+
+
+def _band_score_by_max(value: float, bands: list[dict[str, float]]) -> float:
+    for band in bands:
+        if value < float(band["max"]):
+            return float(band["penalty"])
+    return 0.0
+
+
+def _band_score_by_range(value: float, bands: list[dict[str, float]]) -> float:
+    for band in bands:
+        lower = float(band.get("min", float("-inf")))
+        upper = float(band.get("max", float("inf")))
+        if lower <= value <= upper:
+            return float(band["score"])
+    return 0.0
+
+
+def _rule_compare(value: float, operator: str, threshold: float) -> bool:
+    if operator == ">":
+        return value > threshold
+    if operator == ">=":
+        return value >= threshold
+    if operator == "<":
+        return value < threshold
+    if operator == "<=":
+        return value <= threshold
+    raise ValueError(f"unsupported operator: {operator}")
 
 
 def _fmt_pct(value: float | None) -> str:
@@ -193,31 +235,32 @@ def _novelty_score(
     concept_name: str | None,
 ) -> float:
     if previous is None or previous.display_bucket not in {"core_anchor", "new_long", "catchup"}:
-        return 1.0
+        return float(NOVELTY_RULES["max_score"])
 
     novelty = 0.0
     previous_score = float(previous.confidence_score or 0.0)
     score_delta = score_10 - previous_score
-    if score_delta >= 0.8:
-        novelty += 0.45
-    elif score_delta >= 0.4:
-        novelty += 0.25
+    novelty += _band_score_by_min(score_delta, NOVELTY_RULES["score_delta_bands"])
 
     if theme_name and previous.best_meta_theme and theme_name != previous.best_meta_theme:
-        novelty += 0.30
+        novelty += float(NOVELTY_RULES["meta_theme_switch_bonus"])
     if concept_name and previous.best_concept and concept_name != previous.best_concept:
-        novelty += 0.20
+        novelty += float(NOVELTY_RULES["concept_switch_bonus"])
 
     pct = fact.pct_chg_prev_close or 0.0
     range_position = _clamp01(fact.range_position)
-    flow_tail = 0.65 * fact.main_flow_rank + 0.35 * fact.super_flow_rank
-    if pct >= 0.06 and range_position >= 0.70:
-        novelty += 0.15
-    if flow_tail >= 0.75:
-        novelty += 0.10
+    flow_tail_weights = NOVELTY_RULES["flow_tail_weights"]
+    flow_tail = (
+        float(flow_tail_weights["main_flow_rank"]) * fact.main_flow_rank
+        + float(flow_tail_weights["super_flow_rank"]) * fact.super_flow_rank
+    )
+    if pct >= float(NOVELTY_RULES["pct_min"]) and range_position >= float(NOVELTY_RULES["range_position_min"]):
+        novelty += float(NOVELTY_RULES["pct_shape_bonus"])
+    if flow_tail >= float(NOVELTY_RULES["flow_tail_min"]):
+        novelty += float(NOVELTY_RULES["flow_tail_bonus"])
     if previous.display_bucket == "catchup":
-        novelty += 0.15
-    return min(1.0, novelty)
+        novelty += float(NOVELTY_RULES["catchup_origin_bonus"])
+    return min(float(NOVELTY_RULES["max_score"]), novelty)
 
 
 def _resolve_theme_context(
@@ -262,23 +305,29 @@ def _resolve_theme_context(
     for concept_name in fact.concepts:
         overlay_score = float(market.concept_overlay_score_map.get(concept_name, 0.0) or 0.0)
         if overlay_score <= 0.0:
-            overlay_score = concept_priority.get(concept_name, 0.0) * 0.75
+            overlay_score = concept_priority.get(concept_name, 0.0) * float(
+                THEME_CONTEXT_RULES["overlay_fallback_multiplier"]
+            )
         overlay_rank = int(market.concept_overlay_rank_map.get(concept_name, 999) or 999)
         if concept_name in best_theme_primary_concepts:
-            overlay_score += 0.15
+            overlay_score += float(THEME_CONTEXT_RULES["theme_primary_bonus"])
         elif has_primary_support and best_theme_primary_concepts:
-            overlay_score -= 0.15
+            overlay_score -= float(THEME_CONTEXT_RULES["theme_primary_penalty"])
         if concept_name in strongest_concepts:
-            overlay_score += 0.04
+            overlay_score += float(THEME_CONTEXT_RULES["strongest_concept_bonus"])
         if concept_name in acceleration_concepts:
-            overlay_score += 0.03
+            overlay_score += float(THEME_CONTEXT_RULES["acceleration_concept_bonus"])
         if overlay_score > best_concept_score or (overlay_score == best_concept_score and overlay_rank < best_concept_rank):
             best_concept = concept_name
             best_concept_score = overlay_score
             best_concept_rank = overlay_rank
     if best_concept is None:
         best_concept = fact.best_concept
-        best_concept_score = concept_priority.get(best_concept or "", 0.0) * 0.75 if best_concept else 0.0
+        best_concept_score = (
+            concept_priority.get(best_concept or "", 0.0) * float(THEME_CONTEXT_RULES["overlay_fallback_multiplier"])
+            if best_concept
+            else 0.0
+        )
 
     theme_eq_return = float(theme_eq_return_map.get(best_theme or "", 0.0) or 0.0)
     relative_to_theme = (_safe(fact.pct_chg_prev_close) - theme_eq_return) if best_theme else None
@@ -380,51 +429,53 @@ def _long_score_breakdown(
     concept_support = _safe(context.get("concept_support"))  # type: ignore[arg-type]
     theme_overlap = _safe(context.get("theme_overlap"))  # type: ignore[arg-type]
 
+    alignment_rules = LONG_SCORE_RULES["alignment"]
     alignment = 0.0
-    alignment += {1: 1.6, 2: 1.3, 3: 1.0}.get(meta_rank, 0.6)
-    alignment += 0.6 if best_concept_score >= 0.80 else 0.4 if best_concept_score >= 0.60 else 0.2
-    alignment += 0.3 if best_meta_theme and best_meta_theme in fact.meta_themes else 0.0
+    theme_rank_scores = alignment_rules["theme_rank_scores"]
+    alignment += float(theme_rank_scores.get(str(meta_rank), theme_rank_scores["default"]))
+    alignment += _band_score_by_min(best_concept_score, alignment_rules["concept_score_bands"])
+    alignment += (
+        float(alignment_rules["theme_confirm_bonus"])
+        if best_meta_theme and best_meta_theme in fact.meta_themes
+        else 0.0
+    )
     alignment = min(LONG_SCORE_CAPS["alignment"], alignment)
 
+    dual_support_rules = LONG_SCORE_RULES["dual_support"]
     dual_support = 0.0
-    if 2 <= concept_support <= 7:
-        dual_support += 1.2
-    elif concept_support >= 8:
-        dual_support += 0.8
-    else:
-        dual_support += 0.5
-    dual_support += 0.4 if theme_overlap > 0 else 0.0
-    dual_support += 0.4 if META_TO_STYLE_HINT.get(best_meta_theme) in fact.style_names else 0.0
+    dual_support += _band_score_by_range(concept_support, dual_support_rules["concept_support_bands"])
+    dual_support += float(dual_support_rules["theme_overlap_bonus"]) if theme_overlap > 0 else 0.0
+    dual_support += (
+        float(dual_support_rules["style_hint_bonus"])
+        if META_TO_STYLE_HINT.get(best_meta_theme) in fact.style_names
+        else 0.0
+    )
     dual_support = min(LONG_SCORE_CAPS["dual_support"], dual_support)
 
-    pct = _safe(fact.pct_chg_prev_close)
-    ret3 = _safe(fact.ret_3d)
-    ret5 = _safe(fact.ret_5d)
-    ret10 = _safe(fact.ret_10d)
-    temperature = LONG_SCORE_CAPS["temperature"]
-    if pct > 0.06:
-        temperature -= 0.4
-    if pct > 0.075:
-        temperature -= 0.5
-    if ret3 > 0.10:
-        temperature -= 0.4
-    if ret5 > 0.15:
-        temperature -= 0.4
-    if ret10 > 0.22:
-        temperature -= 0.3
-    if _safe(fact.amplitude) > 0.12:
-        temperature -= 0.3
-    if _safe(fact.turnover_rate) > 0.18:
-        temperature -= 0.2
-    temperature = max(0.2, temperature)
+    temperature_rules = LONG_SCORE_RULES["temperature"]
+    temperature = float(temperature_rules["base"])
+    for rule in temperature_rules["penalties"]:
+        field_name = str(rule["field"])
+        value = _safe(getattr(fact, field_name, None))
+        if _rule_compare(value, str(rule["operator"]), float(rule["threshold"])):
+            temperature -= float(rule["penalty"])
+    temperature = max(float(temperature_rules["min"]), temperature)
 
+    research_rules = LONG_SCORE_RULES["research"]
     research = 0.0
-    research += 0.7 if fact.onepage_path else 0.0
-    research += 0.55 if fact.company_card_path else 0.0
-    research += min(0.55, _safe(fact.research_coverage_score) * 0.7)
-    research += min(0.5, float(fact.recent_intel_mentions) / 120.0)
+    research += float(research_rules["onepage_bonus"]) if fact.onepage_path else 0.0
+    research += float(research_rules["company_card_bonus"]) if fact.company_card_path else 0.0
+    research += min(
+        float(research_rules["coverage_cap"]),
+        _safe(fact.research_coverage_score) * float(research_rules["coverage_multiplier"]),
+    )
+    research += min(
+        float(research_rules["intel_mentions_cap"]),
+        float(fact.recent_intel_mentions) / float(research_rules["intel_mentions_divisor"]),
+    )
     research = min(LONG_SCORE_CAPS["research"], research)
 
+    tape_rules = LONG_SCORE_RULES["tape"]
     pace = _safe(fact.money_pace_ratio)
     rp = _safe(fact.range_position)
     pfo = _safe(fact.open_ret)
@@ -432,13 +483,17 @@ def _long_score_breakdown(
     main_flow = _safe(fact.main_net_inflow)
     large_flow = _safe(fact.super_net) + _safe(fact.large_net)
     tape = 0.0
-    tape += 0.7 if pace >= 1.8 else 0.5 if pace >= 1.2 else 0.3
-    tape += 0.6 if rp >= 0.6 else 0.4 if rp >= 0.4 else 0.2
-    tape += 0.4 if -0.005 <= pfo <= 0.06 else 0.2 if pfo >= -0.02 else 0.0
-    tape += 0.3 if imbalance >= -0.2 else 0.1
-    tape += 0.35 if main_flow > 0 else 0.0
-    tape += 0.25 if large_flow > 0 else 0.0
-    tape += 0.2 if _safe(fact.volume_ratio) >= 1.5 else 0.0
+    tape += _band_score_by_min(pace, tape_rules["pace_bands"])
+    tape += _band_score_by_min(rp, tape_rules["range_position_bands"])
+    tape += _band_score_by_range(pfo, tape_rules["open_ret_bands"])
+    tape += _band_score_by_min(imbalance, tape_rules["bid_ask_imbalance_bands"])
+    tape += float(tape_rules["main_flow_positive_bonus"]) if main_flow > 0 else 0.0
+    tape += float(tape_rules["large_flow_positive_bonus"]) if large_flow > 0 else 0.0
+    tape += (
+        float(tape_rules["volume_ratio_bonus"])
+        if _safe(fact.volume_ratio) >= float(tape_rules["volume_ratio_min"])
+        else 0.0
+    )
     tape = min(LONG_SCORE_CAPS["tape"], tape)
 
     total = max(1.0, min(10.0, round(alignment + dual_support + temperature + research + tape, 1)))
@@ -462,6 +517,20 @@ def compute_opportunity_discovery(
     catchup_limit: int = 5,
 ) -> OpportunityDiscoveryOutput:
     concept_priority = _concept_priority(market)
+    base_focus_rules = BUCKET_RULES["base_focus"]
+    capacity_anchor_rules = BUCKET_RULES["capacity_anchor"]
+    carried_core_anchor_rules = BUCKET_RULES["carried_core_anchor"]
+    continuity_upgrade_rules = BUCKET_RULES["continuity_upgrade"]
+    catchup_upgrade_guard_rules = BUCKET_RULES["catchup_upgrade_guard"]
+    catchup_candidate_rules = BUCKET_RULES["catchup_candidate"]
+    catchup_reset_score_weights = CATCHUP_RULES["reset_score_weights"]
+    catchup_focus_bonus_rules = CATCHUP_RULES["focus_bonus"]
+    deep_pullback_gate = CATCHUP_RULES["deep_pullback_gate"]
+    catchup_duplicate_new_long_rules = CATCHUP_RULES["duplicate_new_long_penalty"]
+    weak_repeat_new_long_gate = CATCHUP_RULES["weak_repeat_new_long_gate"]
+    fresh_discovery_gate = CATCHUP_RULES["fresh_discovery_gate"]
+    catchup_score_formula = CATCHUP_RULES["score_formula"]
+    catchup_display_score_formula = CATCHUP_RULES["display_score_formula"]
     dominant_primary_concepts = set()
     if market.top_meta_themes:
         dominant_primary_concepts = {
@@ -494,16 +563,22 @@ def compute_opportunity_discovery(
 
         if (
             base_focus
-            and pct >= -0.02
-            and pct <= 0.10
-            and _safe(fact.ret_3d, -999.0) <= 0.15
-            and _safe(fact.ret_5d, -999.0) <= 0.20
-            and _safe(fact.ret_10d, -999.0) <= 0.28
-            and range_position >= 0.35
-            and _safe(fact.money_pace_ratio) >= 0.9
-            and _safe(fact.open_ret) >= -0.02
-            and _safe(fact.amount) >= 3e8
-            and (long_score >= 8.2 or (previous_bucket in {"core_anchor", "new_long"} and long_score >= 6.8))
+            and pct >= float(base_focus_rules["pct_min"])
+            and pct <= float(base_focus_rules["pct_max"])
+            and _safe(fact.ret_3d, -999.0) <= float(base_focus_rules["ret_3d_max"])
+            and _safe(fact.ret_5d, -999.0) <= float(base_focus_rules["ret_5d_max"])
+            and _safe(fact.ret_10d, -999.0) <= float(base_focus_rules["ret_10d_max"])
+            and range_position >= float(base_focus_rules["range_position_min"])
+            and _safe(fact.money_pace_ratio) >= float(base_focus_rules["money_pace_ratio_min"])
+            and _safe(fact.open_ret) >= float(base_focus_rules["open_ret_min"])
+            and _safe(fact.amount) >= float(base_focus_rules["amount_min"])
+            and (
+                long_score >= float(base_focus_rules["long_score_min"])
+                or (
+                    previous_bucket in {"core_anchor", "new_long"}
+                    and long_score >= float(base_focus_rules["repeat_long_score_min"])
+                )
+            )
         ):
             novelty_score = _novelty_score(
                 fact,
@@ -516,18 +591,18 @@ def compute_opportunity_discovery(
             capacity_anchor = (
                 bool(repeat_context["recent_repeat"])
                 and not bool(repeat_context["allow_prominent_repeat"])
-                and _safe(fact.amount) >= 5e9
-                and pct >= 0.015
-                and pct <= 0.06
-                and range_position >= 0.45
-                and _safe(fact.ret_5d, -999.0) <= 0.12
-                and float(repeat_context["rank_score"]) >= 9.0
+                and _safe(fact.amount) >= float(capacity_anchor_rules["amount_min"])
+                and pct >= float(capacity_anchor_rules["pct_min"])
+                and pct <= float(capacity_anchor_rules["pct_max"])
+                and range_position >= float(capacity_anchor_rules["range_position_min"])
+                and _safe(fact.ret_5d, -999.0) <= float(capacity_anchor_rules["ret_5d_max"])
+                and float(repeat_context["rank_score"]) >= float(capacity_anchor_rules["rank_score_min"])
             )
             should_anchor = bool(repeat_context["anchor_candidate"]) or (
                 previous_bucket == "core_anchor"
                 and bool(repeat_context["recent_repeat"])
                 and not bool(repeat_context["allow_prominent_repeat"])
-                and long_score >= 8.6
+                and long_score >= float(carried_core_anchor_rules["long_score_min"])
             ) or capacity_anchor
             metadata = {
                 **score_breakdown,
@@ -577,11 +652,11 @@ def compute_opportunity_discovery(
                     previous_bucket == "new_long"
                     and bool(repeat_context["recent_repeat"])
                     and not bool(repeat_context["allow_prominent_repeat"])
-                    and long_score >= 9.4
-                    and _safe(fact.amount) >= 3e9
-                    and _safe(fact.main_net_inflow) >= 1e8
-                    and range_position >= 0.50
-                    and _safe(fact.ret_10d, -999.0) <= 0.12
+                    and long_score >= float(continuity_upgrade_rules["long_score_min"])
+                    and _safe(fact.amount) >= float(continuity_upgrade_rules["amount_min"])
+                    and _safe(fact.main_net_inflow) >= float(continuity_upgrade_rules["main_net_inflow_min"])
+                    and range_position >= float(continuity_upgrade_rules["range_position_min"])
+                    and _safe(fact.ret_10d, -999.0) <= float(continuity_upgrade_rules["ret_10d_max"])
                 ):
                     continuity_bonus = TREND_BACKBONE_CONTINUITY_BONUS
                 mainline_primary_concept_bonus = (
@@ -591,7 +666,10 @@ def compute_opportunity_discovery(
                 if (
                     previous_bucket == "catchup"
                     and bool(repeat_context["high_quality_repeat"])
-                    and (range_position < 0.45 or _safe(fact.ret_10d, -999.0) > 0.16)
+                    and (
+                        range_position < float(catchup_upgrade_guard_rules["range_position_min"])
+                        or _safe(fact.ret_10d, -999.0) > float(catchup_upgrade_guard_rules["ret_10d_max"])
+                    )
                 ):
                     catchup_upgrade_guard_penalty = CATCHUP_UPGRADE_GUARD_PENALTY
                 rank_score = (
@@ -655,31 +733,48 @@ def compute_opportunity_discovery(
         best_theme = item["best_theme"]  # type: ignore[assignment]
         best_concept = item["best_concept"]  # type: ignore[assignment]
         assigned_bucket = item["assigned_bucket"]  # type: ignore[assignment]
+        previous_bucket = item["previous_bucket"]  # type: ignore[assignment]
+        range_position = _clamp01(fact.range_position)
+        pct = _safe(fact.pct_chg_prev_close)
         catchup_focus_support = sum(1 for concept in fact.concepts if concept in catchup_focus_concepts)
-        catchup_reset_score = 0.55 * (1.0 - fact.ret_3d_rank) + 0.45 * (1.0 - fact.ret_10d_rank)
-        catchup_amount_norm = min(1.0, _safe(fact.amount) / 8e9)
-        catchup_flow_norm = min(1.0, max(0.0, _safe(fact.main_net_inflow)) / 2e8)
+        catchup_reset_score = (
+            float(catchup_reset_score_weights["ret_3d_rank"]) * (1.0 - fact.ret_3d_rank)
+            + float(catchup_reset_score_weights["ret_10d_rank"]) * (1.0 - fact.ret_10d_rank)
+        )
+        catchup_amount_norm = min(1.0, _safe(fact.amount) / float(CATCHUP_RULES["amount_norm_divisor"]))
+        catchup_flow_norm = min(1.0, max(0.0, _safe(fact.main_net_inflow)) / float(CATCHUP_RULES["flow_norm_divisor"]))
         best_concept_focus = bool(best_concept and best_concept in catchup_focus_concepts)
-        catchup_focus_bonus = 0.30 if best_concept_focus else 0.15 if catchup_focus_support >= 2 else 0.0
-        catchup_best_concept_penalty = 0.25 if best_concept and best_concept not in catchup_focus_concepts else 0.0
+        catchup_focus_bonus = (
+            float(catchup_focus_bonus_rules["best_concept"])
+            if best_concept_focus
+            else float(catchup_focus_bonus_rules["support_ge_2"]) if catchup_focus_support >= 2 else 0.0
+        )
+        catchup_best_concept_penalty = (
+            float(CATCHUP_RULES["best_concept_miss_penalty"])
+            if best_concept and best_concept not in catchup_focus_concepts
+            else 0.0
+        )
         money_pace_ratio = _safe(fact.money_pace_ratio)
-        catchup_pace_penalty = 0.0
-        if money_pace_ratio < 0.75:
-            catchup_pace_penalty = 0.60
-        elif money_pace_ratio < 0.90:
-            catchup_pace_penalty = 0.35
+        catchup_pace_penalty = _band_score_by_max(money_pace_ratio, CATCHUP_RULES["pace_penalty_bands"])
         deep_pullback_penalty = 0.0
-        if _safe(fact.ret_5d) < -0.12 or _safe(fact.ret_10d) < -0.15:
+        if (
+            _safe(fact.ret_5d) < float(deep_pullback_gate["ret_5d_min"])
+            or _safe(fact.ret_10d) < float(deep_pullback_gate["ret_10d_min"])
+        ):
             deep_pullback_penalty = DEEP_PULLBACK_CATCHUP_PENALTY
         duplicate_new_long_penalty = 0.0
-        if assigned_bucket == "new_long" and range_position > 0.80 and _safe(fact.amount) < 2.5e9:
-            duplicate_new_long_penalty = 0.40
+        if (
+            assigned_bucket == "new_long"
+            and range_position >= float(catchup_duplicate_new_long_rules["range_position_min"])
+            and _safe(fact.amount) < float(catchup_duplicate_new_long_rules["amount_max"])
+        ):
+            duplicate_new_long_penalty = float(catchup_duplicate_new_long_rules["penalty"])
         weak_repeat_new_long_penalty = 0.0
         if (
             assigned_bucket == "new_long"
-            and _safe(fact.amount) < 3e9
-            and range_position >= 0.50
-            and _safe(fact.ret_3d) < 0.02
+            and _safe(fact.amount) < float(weak_repeat_new_long_gate["amount_max"])
+            and range_position >= float(weak_repeat_new_long_gate["range_position_min"])
+            and _safe(fact.ret_3d) < float(weak_repeat_new_long_gate["ret_3d_max"])
         ):
             weak_repeat_new_long_penalty = WEAK_REPEAT_NEW_LONG_CATCHUP_PENALTY
         negative_main_flow_penalty = NEGATIVE_MAIN_FLOW_CATCHUP_PENALTY if _safe(fact.main_net_inflow) < 0 else 0.0
@@ -687,20 +782,28 @@ def compute_opportunity_discovery(
         fresh_catchup_discovery_bonus = 0.0
         if (
             previous_bucket is None
-            and money_pace_ratio >= 1.5
-            and _safe(fact.ret_10d, -999.0) <= 0.08
-            and best_concept == "AI智能体"
+            and money_pace_ratio >= float(fresh_discovery_gate["money_pace_ratio_min"])
+            and _safe(fact.ret_10d, -999.0) <= float(fresh_discovery_gate["ret_10d_max"])
+            and best_concept == str(fresh_discovery_gate["concept_name"])
         ):
             fresh_catchup_discovery_bonus = FRESH_CATCHUP_DISCOVERY_BONUS
         company_card_quality_score = _safe(getattr(fact, "company_card_quality_score", None))
         tracking_text = str(getattr(fact, "company_card_tracking_recommendation", "") or "")
         catchup_score = (
-            min(4.0, money_pace_ratio) * 0.28
-            + _clamp01(fact.range_position) * 1.20
-            + company_card_quality_score * 1.10
-            + catchup_amount_norm * 0.90
-            + catchup_flow_norm * 0.80
-            + (0.08 - max(0.0, min(0.08, _safe(fact.ret_3d)))) * 5.0
+            min(float(catchup_score_formula["money_pace_cap"]), money_pace_ratio)
+            * float(catchup_score_formula["money_pace_weight"])
+            + range_position * float(catchup_score_formula["range_position_weight"])
+            + company_card_quality_score * float(catchup_score_formula["company_card_quality_weight"])
+            + catchup_amount_norm * float(catchup_score_formula["amount_norm_weight"])
+            + catchup_flow_norm * float(catchup_score_formula["flow_norm_weight"])
+            + (
+                float(catchup_score_formula["ret_3d_anchor"])
+                - max(
+                    0.0,
+                    min(float(catchup_score_formula["ret_3d_clip_max"]), _safe(fact.ret_3d)),
+                )
+            )
+            * float(catchup_score_formula["ret_3d_weight"])
             + catchup_focus_bonus
             + fresh_catchup_discovery_bonus
             - catchup_best_concept_penalty
@@ -712,23 +815,20 @@ def compute_opportunity_discovery(
             - negative_ret3_penalty
         )
         if tracking_text and "否" in tracking_text:
-            catchup_score -= 0.35
-        pct = _safe(fact.pct_chg_prev_close)
-        range_position = _clamp01(fact.range_position)
+            catchup_score -= float(catchup_score_formula["tracking_block_penalty"])
         if (
             assigned_bucket != "core_anchor"
-            and
-            catchup_focus_support > 0
-            and 0.01 <= pct < 0.07
-            and _safe(fact.ret_3d, -999.0) <= 0.10
-            and _safe(fact.ret_5d, -999.0) <= 0.16
-            and range_position >= 0.35
+            and catchup_focus_support > 0
+            and float(catchup_candidate_rules["pct_min"]) <= pct < float(catchup_candidate_rules["pct_max"])
+            and _safe(fact.ret_3d, -999.0) <= float(catchup_candidate_rules["ret_3d_max"])
+            and _safe(fact.ret_5d, -999.0) <= float(catchup_candidate_rules["ret_5d_max"])
+            and range_position >= float(catchup_candidate_rules["range_position_min"])
             and (
-                _safe(fact.money_pace_ratio) >= 1.0
-                or _safe(fact.volume_ratio) >= 1.2
+                _safe(fact.money_pace_ratio) >= float(catchup_candidate_rules["money_pace_ratio_min"])
+                or _safe(fact.volume_ratio) >= float(catchup_candidate_rules["volume_ratio_min"])
                 or _safe(fact.main_net_inflow) > 0
             )
-            and catchup_score >= 2.40
+            and catchup_score >= float(catchup_candidate_rules["catchup_score_min"])
         ):
             reason = (
                 f"{best_theme or best_concept or '主线'}仍强，但近3/10日相对不算最热，"
@@ -741,7 +841,14 @@ def compute_opportunity_discovery(
                     _candidate(
                         fact,
                         display_bucket="catchup",
-                        score=min(10.0, max(1.0, catchup_score * 1.35 + 4.2)),
+                        score=min(
+                            float(catchup_display_score_formula["max"]),
+                            max(
+                                float(catchup_display_score_formula["min"]),
+                                catchup_score * float(catchup_display_score_formula["multiplier"])
+                                + float(catchup_display_score_formula["intercept"]),
+                            ),
+                        ),
                         reason=reason,
                         theme_name=best_theme,
                         concept_name=best_concept,

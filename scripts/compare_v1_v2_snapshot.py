@@ -26,12 +26,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Compare one V1 snapshot against one awin V2 snapshot.")
     parser.add_argument("--trade-date", required=True)
     parser.add_argument("--snapshot-time", required=True, help="Target clock like 10:35 or 10:35:00")
-    parser.add_argument("--v1-root", type=Path, default=Path("/home/yh/.openclaw/workspace/projects/investment-team"))
+    parser.add_argument("--v1-root", type=Path, help="V1 state root directory. Required when --v1-state-path is not provided.")
     parser.add_argument("--v1-state-path", type=Path)
     parser.add_argument("--db-path", type=Path, default=get_app_config().sqlite_path)
     parser.add_argument("--v2-run-id")
     parser.add_argument("--format", choices=["markdown", "json"], default="markdown")
     args = parser.parse_args()
+
+    if args.v1_state_path is None and args.v1_root is None:
+        parser.error("either --v1-state-path or --v1-root must be provided")
 
     v1_path = args.v1_state_path or locate_v1_snapshot(args.v1_root, args.trade_date, args.snapshot_time)
     v2_run_id = args.v2_run_id or locate_v2_run(args.db_path, args.trade_date, args.snapshot_time)

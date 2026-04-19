@@ -1,3 +1,9 @@
+"""qmt_bar_1d interface.
+
+Reads QMT daily bar history from `stg.qmt_bar_1d` and provides the recent
+day-level baseline used by evaluation and medium-term context features.
+"""
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -21,6 +27,8 @@ def _to_float(value):
 
 
 class QmtBar1dAdapter(DbBackedAdapter):
+    """Load day bars from `stg.qmt_bar_1d` for a symbol set and date range."""
+
     source_name = "qmt_bar_1d"
 
     def __init__(self) -> None:

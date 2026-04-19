@@ -6,9 +6,9 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from awin.adapters import (
-    DcfSnapshotAdapter,
+    DcfHqZjSnapshotAdapter,
+    QmtAshareSnapshot5mAdapter,
     QmtBar1dAdapter,
-    QmtSnapshotAdapter,
     ResearchCoverageAdapter,
     SnapshotRequest,
     StockMasterAdapter,
@@ -62,23 +62,23 @@ def build_m0_snapshot_bundle(
     ths_app_hot_adapter = ThsAppHotConceptAdapter()
     ths_cli_hot_adapter = ThsCliHotConceptAdapter()
     research_adapter = ResearchCoverageAdapter()
-    qmt_adapter = QmtSnapshotAdapter()
+    qmt_ashare_snapshot_5m_adapter = QmtAshareSnapshot5mAdapter()
     qmt_bar_1d_adapter = QmtBar1dAdapter()
-    dcf_adapter = DcfSnapshotAdapter()
+    dcf_hq_zj_snapshot_adapter = DcfHqZjSnapshotAdapter()
     market_overview_adapter = ThsMarketOverviewAdapter()
 
     stock_master = stock_master_adapter.load_rows()
     ths_concepts = ths_adapter.load_rows(request)
     ths_hot_concepts = ths_app_hot_adapter.load_rows(request) + ths_cli_hot_adapter.load_rows(request)
     research = research_adapter.load_rows(request)
-    qmt_rows = qmt_adapter.load_rows(request)
+    qmt_rows = qmt_ashare_snapshot_5m_adapter.load_rows(request)
     trade_day = date.fromisoformat(request.trade_date)
     qmt_bar_1d_rows, qmt_bar_1d_health = qmt_bar_1d_adapter.load_rows_with_health(
         [item.symbol for item in qmt_rows],
         start_date=(trade_day - timedelta(days=45)).isoformat(),
         end_date=request.trade_date,
     )
-    dcf_rows, dcf_health = dcf_adapter.load_rows_with_health(request)
+    dcf_rows, dcf_health = dcf_hq_zj_snapshot_adapter.load_rows_with_health(request)
     market_tape = market_overview_adapter.load_market_tape()
 
     market = compute_market_understanding(
@@ -110,9 +110,9 @@ def build_m0_snapshot_bundle(
             "ths_app_hot_concept": ths_app_hot_adapter.health().to_dict(),
             "ths_cli_hot_concept": ths_cli_hot_adapter.health().to_dict(),
             "research": research_adapter.health().to_dict(),
-            "qmt": qmt_adapter.health().to_dict(),
+            "qmt_ashare_snapshot_5m": qmt_ashare_snapshot_5m_adapter.health().to_dict(),
             "qmt_bar_1d": qmt_bar_1d_health.to_dict(),
-            "dcf": dcf_health.to_dict(),
+            "dcf_hq_zj_snapshot": dcf_health.to_dict(),
             "ths_market_overview": market_overview_adapter.health().to_dict(),
         },
     )

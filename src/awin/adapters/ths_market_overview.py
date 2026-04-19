@@ -1,3 +1,9 @@
+"""ths_market_overview interface.
+
+Reads the local THS market-overview snapshot file and derives the market tape
+used by regime, breadth and freshness judgment.
+"""
+
 from __future__ import annotations
 
 import json
@@ -129,6 +135,8 @@ def derive_market_tape(payload: dict) -> dict:
 
 
 class ThsMarketOverviewAdapter(FileBackedAdapter):
+    """Load the local THS market-overview file and derive market tape fields."""
+
     source_name = "ths_market_overview"
 
     def __init__(self, path: Path | None = None) -> None:

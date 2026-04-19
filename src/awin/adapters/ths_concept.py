@@ -1,15 +1,23 @@
+"""ths_concept interface.
+
+Reads the THS concept-to-stock mapping and the local overlay config so each
+stock can be mapped into monitored concepts and meta-themes.
+"""
+
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from awin.adapters.base import FileBackedAdapter, SnapshotRequest
 from awin.adapters.contracts import SourceHealth, ThsConceptRow
 from awin.config import get_app_config
+from awin.utils.structured_config import load_structured_config
 from awin.utils.symbols import infer_symbol_from_stock_code, normalize_stock_code
 
 
 class ThsConceptAdapter(FileBackedAdapter):
+    """Load THS concept membership and normalize it into monitored themes."""
+
     source_name = "ths_concepts"
 
     def __init__(
@@ -40,8 +48,8 @@ class ThsConceptAdapter(FileBackedAdapter):
         if not self.root.exists() or not self.overlay_config_path.exists():
             return []
 
-        concept_map_payload = json.loads(self.root.read_text(encoding="utf-8"))
-        overlay_payload = json.loads(self.overlay_config_path.read_text(encoding="utf-8"))
+        concept_map_payload = load_structured_config(self.root, label="ths concept map")
+        overlay_payload = load_structured_config(self.overlay_config_path, label="overlay config")
         concept_whitelist = set(overlay_payload.get("concept_whitelist", []))
         aliases = overlay_payload.get("concept_aliases", {})
         alias_to_canonical = {}

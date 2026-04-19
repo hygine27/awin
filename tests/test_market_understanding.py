@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -10,10 +11,41 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from awin.adapters.contracts import DcfSnapshotRow, QmtSnapshotRow, StockMasterRow, ThsConceptRow, ThsHotConceptRow
-from awin.market_understanding import compute_market_understanding
+from awin.config import ConfigError
+from awin.market_understanding import compute_market_understanding, load_style_baskets
 
 
 class MarketUnderstandingTestCase(unittest.TestCase):
+    def test_load_style_baskets_rejects_unknown_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "style_config.yaml"
+            config_path.write_text(
+                """
+# comment: yaml with comments should be supported
+style_baskets:
+  科技成长:
+    industries: [半导体]
+    market_types: [科创板]
+    unexpected_field: [x]
+thresholds:
+  min_constituents: 12
+  strong_move_pct: 0.02
+  near_high_threshold: 0.8
+  active_pace_threshold: 1.2
+  unused_threshold: 0.1
+score_weights:
+  eq_return: 0.4
+  up_ratio: 0.2
+  strong_ratio: 0.15
+  near_high_ratio: 0.15
+  activity_ratio: 0.1
+                """.strip(),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ConfigError):
+                load_style_baskets(config_path)
+
     def test_compute_market_understanding_produces_style_and_theme_summary(self) -> None:
         stock_master = [
             StockMasterRow(symbol="300001.SZ", stock_code="300001", stock_name="A", industry="软件服务", market="创业板"),

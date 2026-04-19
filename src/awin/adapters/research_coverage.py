@@ -1,3 +1,10 @@
+"""research_coverage interface.
+
+Reads local onepage, company-card and market-intelligence files and merges them
+into one research coverage view used only as ranking enhancement, not as the
+primary intraday trigger source.
+"""
+
 from __future__ import annotations
 
 import re
@@ -40,6 +47,8 @@ def _company_card_quality_score(meta: dict) -> float:
 
 
 class ResearchCoverageAdapter(FileBackedAdapter):
+    """Aggregate local research artifacts into one per-symbol coverage record."""
+
     source_name = "research_coverage"
 
     def __init__(

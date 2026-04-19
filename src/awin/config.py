@@ -32,6 +32,9 @@ class AppConfig:
     market_intel_dir: Path
     ths_overlay_config_path: Path
     style_config_path: Path
+    style_profile_config_path: Path
+    opportunity_config_path: Path
+    risk_config_path: Path
     ths_concept_map_path: Path
     ths_market_overview_path: Path
     dcf_max_freshness_minutes: float
@@ -97,6 +100,9 @@ def get_app_config() -> AppConfig:
         market_intel_dir=_resolve_path(_require(env, "AWIN_MARKET_INTEL_DIR")),
         ths_overlay_config_path=_resolve_path(_require(env, "AWIN_THS_OVERLAY_CONFIG_PATH")),
         style_config_path=_resolve_path(_require(env, "AWIN_STYLE_CONFIG_PATH")),
+        style_profile_config_path=_resolve_path(_require(env, "AWIN_STYLE_PROFILE_CONFIG_PATH")),
+        opportunity_config_path=_resolve_path(_require(env, "AWIN_OPPORTUNITY_CONFIG_PATH")),
+        risk_config_path=_resolve_path(_require(env, "AWIN_RISK_CONFIG_PATH")),
         ths_concept_map_path=_resolve_path(_require(env, "AWIN_THS_CONCEPT_MAP_PATH")),
         ths_market_overview_path=_resolve_path(_require(env, "AWIN_THS_MARKET_OVERVIEW_PATH")),
         dcf_max_freshness_minutes=float(_require(env, "AWIN_DCF_MAX_FRESHNESS_MINUTES")),

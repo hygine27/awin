@@ -1,0 +1,177 @@
+# 风险监控规则。
+# 负责识别 overheat / warning / weak。
+
+theme_priority:
+  start: 1.0
+  step: 0.15
+  floor: 0.25
+
+thresholds:
+  risk_limit: 5
+  overheat_intraday_threshold: 0.1
+  overheat_relative_threshold: 0.05
+  weak_intraday_threshold: -0.03
+  weak_relative_threshold: -0.03
+  weak_from_open_threshold: -0.02
+  trend_expansion_overheat_intraday_threshold: 0.08
+  trend_expansion_overheat_relative_threshold: 0.04
+  weak_market_intraday_threshold: -0.02
+  weak_market_relative_threshold: -0.02
+  overheat_score_gate: 0.52
+  warning_score_gate: 0.62
+  weak_score_gate: 0.64
+
+weights:
+  flow_score_main: 0.6
+  flow_score_super: 0.25
+  flow_score_large: 0.15
+  weakness_theme: 0.26
+  weakness_pct_rank: 0.22
+  weakness_range_position: 0.18
+  weakness_flow_score: 0.16
+  weakness_amplitude_rank: 0.1
+  weakness_concept_support: 0.08
+
+quota:
+  trend_expansion_overheat_quota: 4
+  default_overheat_quota_floor: 3
+
+# 过热 / warning / weak 的评分与门槛。
+overheat_rules:
+  regime:
+    theme_score_bands:
+      - min: 0.85
+        score: 1.5
+      - min: 0.7
+        score: 1.1
+      - min: 0.0
+        score: 0.7
+    concept_support_bands:
+      - min: 2.0
+        score: 0.4
+      - min: 0.0
+        score: 0.2
+    cap: 2.5
+
+  stretch:
+    pct_bands:
+      - min: 0.15
+        score: 1.3
+      - min: 0.1
+        score: 1.0
+      - min: 0.0
+        score: 0.6
+    ret_3d_bonus:
+      threshold: 0.12
+      score: 0.5
+    ret_5d_bonus:
+      threshold: 0.18
+      score: 0.4
+    ret_10d_bonus:
+      threshold: 0.28
+      score: 0.3
+    ret_20d_bands:
+      - min: 0.5
+        score: 0.6
+      - min: 0.4
+        score: 0.4
+      - min: 0.25
+        score: 0.2
+    turnover_bonus:
+      threshold: 0.2
+      score: 0.3
+    amplitude_bonus:
+      threshold: 0.12
+      score: 0.2
+    cap: 2.5
+
+  relative:
+    relative_to_theme_bands:
+      - min: 0.08
+        score: 1.0
+      - min: 0.0
+        score: 0.7
+      - min: -999.0
+        score: 0.4
+    concept_support_bands:
+      - min: 4.0
+        score: 0.5
+      - min: 1.0
+        score: 0.2
+    cap: 1.5
+
+  research:
+    onepage_present: 0.55
+    onepage_absent: 0.2
+    company_card_present: 0.45
+    company_card_absent: 0.1
+    coverage_cap: 0.55
+    coverage_multiplier: 0.65
+    intel_mentions_cap: 0.7
+    intel_mentions_divisor: 180.0
+    cap: 1.5
+
+  tape:
+    extension_gate:
+      pct_vs_open_abs_max: 0.01
+      range_position_min: 0.85
+      score: 0.9
+    open_lag_ratio_max: 0.7
+    open_lag_score: 0.6
+    fallback_score: 0.4
+    bid_ask_imbalance_bands:
+      - max: -0.3
+        score: 0.6
+      - max: 0.1
+        score: 0.4
+      - max: 999.0
+        score: 0.2
+    money_pace_bands:
+      - min: 3.0
+        score: 0.5
+      - min: 1.5
+        score: 0.3
+      - min: 0.0
+        score: 0.1
+    negative_flow_bonus: 0.3
+    cap: 2.0
+
+  persistence:
+    ret_20d_bands:
+      - min: 0.5
+        score: 0.18
+      - min: 0.4
+        score: 0.12
+      - min: 0.3
+        score: 0.08
+    turnover_bands:
+      - min: 0.2
+        score: 0.12
+      - min: 0.12
+        score: 0.06
+    amplitude_bands:
+      - min: 0.14
+        score: 0.08
+      - min: 0.1
+        score: 0.04
+    calm_reset_gate:
+      ret_20d_max: 0.3
+      turnover_max: 0.12
+      amplitude_max: 0.12
+      penalty: 0.12
+    concept_adjustments:
+      - concept_name: AIGC概念
+        concept_support_max: 1
+        penalty: 0.14
+      - concept_name: AIGC概念
+        ret_20d_max: 0.2
+        penalty: 0.12
+
+  entry_gates:
+    theme_score_min: 0.55
+    warning_range_position_max: 0.35
+    warning_flow_score_max: 0.4
+    weak_pct_max: -0.04
+    weak_open_ret_max: -0.03
+    weak_range_position_max: 0.2
+    weak_flow_score_max: 0.3

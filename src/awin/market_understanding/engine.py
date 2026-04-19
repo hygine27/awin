@@ -1,35 +1,134 @@
 from __future__ import annotations
 
-import json
 from collections import defaultdict
 from pathlib import Path
 
 from awin.adapters.contracts import DcfSnapshotRow, QmtSnapshotRow, StockMasterRow, ThsConceptRow, ThsHotConceptRow
-from awin.config import get_app_config
+from awin.config import ConfigError, get_app_config
 from awin.contracts.m0 import MarketUnderstandingOutput, MetaThemeItem, StyleRankingItem
+from awin.utils.structured_config import load_structured_config
 from awin.utils.symbols import normalize_stock_code
 
 
-STYLE_SCORE_WEIGHTS = {
-    "eq_return": 0.40,
-    "up_ratio": 0.20,
-    "strong_ratio": 0.15,
-    "near_high_ratio": 0.15,
-    "activity_ratio": 0.10,
+SUPPORTED_STYLE_BASKET_KEYS = {"industries", "market_types"}
+SUPPORTED_STYLE_THRESHOLD_KEYS = {
+    "min_constituents",
+    "strong_move_pct",
+    "near_high_threshold",
+    "active_pace_threshold",
 }
+SUPPORTED_STYLE_SCORE_WEIGHT_KEYS = {
+    "eq_return",
+    "up_ratio",
+    "strong_ratio",
+    "near_high_ratio",
+    "activity_ratio",
+}
+
+
+def _validate_string_list(
+    values: object,
+    *,
+    path: Path,
+    section_name: str,
+    field_name: str,
+) -> list[str]:
+    if values is None:
+        return []
+    if not isinstance(values, list):
+        raise ConfigError(f"invalid style config at {path}: {section_name}.{field_name} must be a list")
+    normalized = [str(item).strip() for item in values if str(item).strip()]
+    return normalized
+
+
+def _validate_style_config(payload: dict, path: Path) -> tuple[dict[str, dict[str, list[str]]], dict[str, float], dict[str, float]]:
+    raw_style_baskets = payload.get("style_baskets")
+    raw_thresholds = payload.get("thresholds")
+    raw_score_weights = payload.get("score_weights")
+    if not isinstance(raw_style_baskets, dict) or not raw_style_baskets:
+        raise ConfigError(f"invalid style config at {path}: style_baskets must be a non-empty object")
+    if not isinstance(raw_thresholds, dict):
+        raise ConfigError(f"invalid style config at {path}: thresholds must be an object")
+    if not isinstance(raw_score_weights, dict):
+        raise ConfigError(f"invalid style config at {path}: score_weights must be an object")
+
+    unknown_threshold_keys = sorted(set(raw_thresholds) - SUPPORTED_STYLE_THRESHOLD_KEYS)
+    if unknown_threshold_keys:
+        raise ConfigError(
+            f"invalid style config at {path}: unsupported threshold keys: {', '.join(unknown_threshold_keys)}"
+        )
+    missing_threshold_keys = sorted(SUPPORTED_STYLE_THRESHOLD_KEYS - set(raw_thresholds))
+    if missing_threshold_keys:
+        raise ConfigError(
+            f"invalid style config at {path}: missing threshold keys: {', '.join(missing_threshold_keys)}"
+        )
+    unknown_score_weight_keys = sorted(set(raw_score_weights) - SUPPORTED_STYLE_SCORE_WEIGHT_KEYS)
+    if unknown_score_weight_keys:
+        raise ConfigError(
+            f"invalid style config at {path}: unsupported score weight keys: {', '.join(unknown_score_weight_keys)}"
+        )
+    missing_score_weight_keys = sorted(SUPPORTED_STYLE_SCORE_WEIGHT_KEYS - set(raw_score_weights))
+    if missing_score_weight_keys:
+        raise ConfigError(
+            f"invalid style config at {path}: missing score weight keys: {', '.join(missing_score_weight_keys)}"
+        )
+
+    style_baskets: dict[str, dict[str, list[str]]] = {}
+    for style_name, raw_rule in raw_style_baskets.items():
+        if not isinstance(raw_rule, dict):
+            raise ConfigError(f"invalid style config at {path}: style_baskets.{style_name} must be an object")
+        unknown_rule_keys = sorted(set(raw_rule) - SUPPORTED_STYLE_BASKET_KEYS)
+        if unknown_rule_keys:
+            raise ConfigError(
+                f"invalid style config at {path}: unsupported keys in style_baskets.{style_name}: {', '.join(unknown_rule_keys)}"
+            )
+        industries = _validate_string_list(
+            raw_rule.get("industries"),
+            path=path,
+            section_name=f"style_baskets.{style_name}",
+            field_name="industries",
+        )
+        market_types = _validate_string_list(
+            raw_rule.get("market_types"),
+            path=path,
+            section_name=f"style_baskets.{style_name}",
+            field_name="market_types",
+        )
+        if not industries and not market_types:
+            raise ConfigError(
+                f"invalid style config at {path}: style_baskets.{style_name} must define industries or market_types"
+            )
+        style_baskets[str(style_name)] = {
+            "industries": industries,
+            "market_types": market_types,
+        }
+
+    thresholds = {key: float(raw_thresholds[key]) for key in SUPPORTED_STYLE_THRESHOLD_KEYS}
+    thresholds["min_constituents"] = int(raw_thresholds["min_constituents"])
+    score_weights = {key: float(raw_score_weights[key]) for key in SUPPORTED_STYLE_SCORE_WEIGHT_KEYS}
+    return style_baskets, thresholds, score_weights
 
 
 def load_style_baskets(config_path: Path | None = None) -> tuple[dict[str, dict], dict[str, float]]:
     config = get_app_config()
     path = config_path or config.style_config_path
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    return payload.get("style_baskets", {}), payload.get("thresholds", {})
+    payload = load_structured_config(path, label="style config")
+    style_baskets, thresholds, _ = _validate_style_config(payload, path)
+    return style_baskets, thresholds
+
+
+def load_style_score_weights(config_path: Path | None = None) -> dict[str, float]:
+    config = get_app_config()
+    path = config_path or config.style_config_path
+    payload = load_structured_config(path, label="style config")
+    _, _, score_weights = _validate_style_config(payload, path)
+    return score_weights
 
 
 def load_overlay_config(config_path: Path | None = None) -> dict:
     config = get_app_config()
     path = config_path or config.ths_overlay_config_path
-    return json.loads(path.read_text(encoding="utf-8"))
+    return load_structured_config(path, label="overlay config")
 
 
 def _safe_div(numerator: float | int, denominator: float | int) -> float | None:
@@ -69,7 +168,12 @@ def _style_matches(style_rule: dict, master: StockMasterRow) -> bool:
     )
 
 
-def _score_buckets(rows: list[dict], *, score_field: str = "composite_score") -> list[dict]:
+def _score_buckets(
+    rows: list[dict],
+    *,
+    score_field: str = "composite_score",
+    score_weights: dict[str, float],
+) -> list[dict]:
     if not rows:
         return []
     metrics = ["eq_return", "up_ratio", "strong_ratio", "near_high_ratio", "activity_ratio"]
@@ -83,7 +187,7 @@ def _score_buckets(rows: list[dict], *, score_field: str = "composite_score") ->
             row[f"{metric}_rank"] = rank_map.get(row[metric], 0.0) if row[metric] is not None else 0.0
     for row in rows:
         row[score_field] = round(
-            sum(row[f"{metric}_rank"] * weight for metric, weight in STYLE_SCORE_WEIGHTS.items()),
+            sum(row[f"{metric}_rank"] * float(score_weights.get(metric, 0.0)) for metric in metrics),
             4,
         )
     rows.sort(key=lambda item: (item[score_field], item.get("eq_return") or -999), reverse=True)
@@ -232,6 +336,7 @@ def compute_market_understanding(
     overlay_config_path: Path | None = None,
 ) -> MarketUnderstandingOutput:
     style_baskets, thresholds = load_style_baskets(style_baskets_config_path)
+    style_score_weights = load_style_score_weights(style_baskets_config_path)
     overlay_payload = load_overlay_config(overlay_config_path)
     overlay_thresholds = overlay_payload.get("thresholds", {})
     concept_to_meta = {
@@ -323,7 +428,7 @@ def compute_market_understanding(
             }
         )
 
-    style_rows = _score_buckets(style_rows)
+    style_rows = _score_buckets(style_rows, score_weights=style_score_weights)
     top_styles = [
         StyleRankingItem(
             style_name=row["style_name"],
@@ -357,7 +462,7 @@ def compute_market_understanding(
                 "activity_ratio": _safe_div(active_count, len(members)),
             }
         )
-    concept_rows = _score_buckets(concept_rows, score_field="stock_composite_score")
+    concept_rows = _score_buckets(concept_rows, score_field="stock_composite_score", score_weights=style_score_weights)
 
     board_score_map, board_detail_map, _ = _derive_board_score_maps(ths_hot_concepts or [])
     for idx, row in enumerate(concept_rows, start=1):

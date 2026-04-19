@@ -104,6 +104,30 @@ CREATE_TABLE_STATEMENTS = [
         FOREIGN KEY (run_id) REFERENCES monitor_run (run_id)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS style_profile (
+        trade_date TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        market_type_label TEXT,
+        exchange_label TEXT,
+        ownership_style TEXT,
+        legacy_industry_label TEXT,
+        sw_l1_code TEXT,
+        sw_l1_name TEXT,
+        sw_l2_code TEXT,
+        sw_l2_name TEXT,
+        sw_l3_code TEXT,
+        sw_l3_name TEXT,
+        float_mv REAL,
+        total_mv REAL,
+        size_bucket_pct TEXT,
+        size_bucket_abs TEXT,
+        capacity_bucket TEXT,
+        composite_style_labels_json TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (trade_date, symbol)
+    )
+    """,
 ]
 
 MIGRATION_ADD_COLUMNS = {
@@ -195,6 +219,25 @@ MIGRATION_ADD_COLUMNS = {
         "message TEXT",
         "created_at TEXT DEFAULT CURRENT_TIMESTAMP",
     ],
+    "style_profile": [
+        "market_type_label TEXT",
+        "exchange_label TEXT",
+        "ownership_style TEXT",
+        "legacy_industry_label TEXT",
+        "sw_l1_code TEXT",
+        "sw_l1_name TEXT",
+        "sw_l2_code TEXT",
+        "sw_l2_name TEXT",
+        "sw_l3_code TEXT",
+        "sw_l3_name TEXT",
+        "float_mv REAL",
+        "total_mv REAL",
+        "size_bucket_pct TEXT",
+        "size_bucket_abs TEXT",
+        "capacity_bucket TEXT",
+        "composite_style_labels_json TEXT",
+        "created_at TEXT DEFAULT CURRENT_TIMESTAMP",
+    ],
 }
 
 INDEX_STATEMENTS = [
@@ -221,5 +264,13 @@ INDEX_STATEMENTS = [
     """
     CREATE INDEX IF NOT EXISTS idx_alert_log_run_id
     ON alert_log (run_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_style_profile_symbol
+    ON style_profile (symbol)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_style_profile_trade_date
+    ON style_profile (trade_date)
     """,
 ]

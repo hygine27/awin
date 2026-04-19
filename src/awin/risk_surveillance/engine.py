@@ -4,12 +4,24 @@ from collections import defaultdict
 
 from awin.analysis import StockFact
 from awin.contracts.m0 import CandidateItem, MarketUnderstandingOutput, RiskSurveillanceOutput
+from awin.risk_surveillance.config import load_risk_rules
+
+
+RISK_RULES = load_risk_rules()
+THEME_PRIORITY_RULES = RISK_RULES["theme_priority"]
+RISK_THRESHOLDS = RISK_RULES["thresholds"]
+RISK_WEIGHTS = RISK_RULES["weights"]
+RISK_QUOTA = RISK_RULES["quota"]
+OVERHEAT_RULES = RISK_RULES["overheat_rules"]
 
 
 def _theme_priority(market: MarketUnderstandingOutput) -> dict[str, float]:
     priority: dict[str, float] = {}
+    start = float(THEME_PRIORITY_RULES["start"])
+    step = float(THEME_PRIORITY_RULES["step"])
+    floor = float(THEME_PRIORITY_RULES["floor"])
     for idx, item in enumerate(market.top_meta_themes, start=1):
-        priority[item.meta_theme] = max(0.25, 1.0 - (idx - 1) * 0.15)
+        priority[item.meta_theme] = max(floor, start - (idx - 1) * step)
     return priority
 
 
@@ -28,6 +40,20 @@ def _clamp01(value: float | None) -> float:
     if value is None:
         return 0.0
     return max(0.0, min(1.0, float(value)))
+
+
+def _score_by_min(value: float, bands: list[dict[str, float]]) -> float:
+    for band in bands:
+        if value >= float(band["min"]):
+            return float(band["score"])
+    return 0.0
+
+
+def _score_by_max(value: float, bands: list[dict[str, float]]) -> float:
+    for band in bands:
+        if value <= float(band["max"]):
+            return float(band["score"])
+    return 0.0
 
 
 def _fmt_pct(value: float | None) -> str:
@@ -98,25 +124,33 @@ def compute_risk_surveillance(
     *,
     risk_limit: int = 5,
 ) -> RiskSurveillanceOutput:
+    risk_limit = int(RISK_THRESHOLDS.get("risk_limit", risk_limit))
     theme_priority = _theme_priority(market)
+    overheat_regime_rules = OVERHEAT_RULES["regime"]
+    overheat_stretch_rules = OVERHEAT_RULES["stretch"]
+    overheat_relative_rules = OVERHEAT_RULES["relative"]
+    overheat_research_rules = OVERHEAT_RULES["research"]
+    overheat_tape_rules = OVERHEAT_RULES["tape"]
+    overheat_persistence_rules = OVERHEAT_RULES["persistence"]
+    overheat_entry_gates = OVERHEAT_RULES["entry_gates"]
     strongest_concepts = set(market.strongest_concepts[:5]) | set(market.acceleration_concepts[:3])
     theme_stats = _build_theme_stats(stock_facts)
 
     overheat_candidates: list[tuple[float, float, CandidateItem]] = []
     weak_candidates: list[tuple[float, float, CandidateItem]] = []
 
-    overheat_intraday_threshold = 0.10
-    overheat_relative_threshold = 0.05
-    weak_intraday_threshold = -0.03
-    weak_relative_threshold = -0.03
-    weak_from_open_threshold = -0.02
+    overheat_intraday_threshold = float(RISK_THRESHOLDS["overheat_intraday_threshold"])
+    overheat_relative_threshold = float(RISK_THRESHOLDS["overheat_relative_threshold"])
+    weak_intraday_threshold = float(RISK_THRESHOLDS["weak_intraday_threshold"])
+    weak_relative_threshold = float(RISK_THRESHOLDS["weak_relative_threshold"])
+    weak_from_open_threshold = float(RISK_THRESHOLDS["weak_from_open_threshold"])
 
     if market.market_regime == "trend_expansion":
-        overheat_intraday_threshold = 0.08
-        overheat_relative_threshold = 0.04
+        overheat_intraday_threshold = float(RISK_THRESHOLDS["trend_expansion_overheat_intraday_threshold"])
+        overheat_relative_threshold = float(RISK_THRESHOLDS["trend_expansion_overheat_relative_threshold"])
     elif market.market_regime == "weak_market_relative_strength":
-        weak_intraday_threshold = -0.02
-        weak_relative_threshold = -0.02
+        weak_intraday_threshold = float(RISK_THRESHOLDS["weak_market_intraday_threshold"])
+        weak_relative_threshold = float(RISK_THRESHOLDS["weak_market_relative_threshold"])
 
     for fact in stock_facts:
         theme_name, theme_score = _max_theme_score(fact.meta_themes, theme_priority)
@@ -129,7 +163,11 @@ def compute_risk_surveillance(
         if fact.pct_chg_prev_close is not None and theme_stat.get("avg_pct") is not None:
             relative_to_theme = float(fact.pct_chg_prev_close) - float(theme_stat["avg_pct"])
 
-        flow_score = 0.60 * fact.main_flow_rank + 0.25 * fact.super_flow_rank + 0.15 * fact.large_flow_rank
+        flow_score = (
+            float(RISK_WEIGHTS["flow_score_main"]) * fact.main_flow_rank
+            + float(RISK_WEIGHTS["flow_score_super"]) * fact.super_flow_rank
+            + float(RISK_WEIGHTS["flow_score_large"]) * fact.large_flow_rank
+        )
         imbalance = _clamp01((0.5 - (fact.bid_ask_imbalance or 0.0) / 2.0))
         pct = fact.pct_chg_prev_close or 0.0
         pct_from_open = fact.open_ret if fact.open_ret is not None else 0.0
@@ -140,87 +178,144 @@ def compute_risk_surveillance(
         main_net_inflow = float(fact.main_net_inflow or 0.0)
         large_flow_net = float(fact.super_net or 0.0) + float(fact.large_net or 0.0)
 
-        overheat_regime = min(2.5, (1.5 if theme_score >= 0.85 else 1.1 if theme_score >= 0.70 else 0.7) + (0.4 if concept_support >= 2 else 0.2))
+        overheat_regime = min(
+            float(overheat_regime_rules["cap"]),
+            _score_by_min(theme_score, overheat_regime_rules["theme_score_bands"])
+            + _score_by_min(float(concept_support), overheat_regime_rules["concept_support_bands"]),
+        )
         overheat_stretch = 0.0
-        overheat_stretch += 1.3 if pct >= 0.15 else 1.0 if pct >= 0.10 else 0.6 if pct >= overheat_intraday_threshold else 0.0
-        overheat_stretch += 0.5 if (fact.ret_3d or -999.0) >= 0.12 else 0.0
-        overheat_stretch += 0.4 if (fact.ret_5d or -999.0) >= 0.18 else 0.0
-        overheat_stretch += 0.3 if (fact.ret_10d or -999.0) >= 0.28 else 0.0
-        overheat_stretch += 0.6 if (fact.ret_20d or -999.0) >= 0.50 else 0.4 if (fact.ret_20d or -999.0) >= 0.40 else 0.2 if (fact.ret_20d or -999.0) >= 0.25 else 0.0
-        overheat_stretch += 0.3 if turnover_rate >= 0.20 else 0.0
-        overheat_stretch += 0.2 if amplitude >= 0.12 else 0.0
-        overheat_stretch = min(2.5, overheat_stretch)
+        pct_bands = []
+        for band in overheat_stretch_rules["pct_bands"]:
+            patched_band = dict(band)
+            if float(band["min"]) <= 0.0:
+                patched_band["min"] = overheat_intraday_threshold
+            pct_bands.append(patched_band)
+        overheat_stretch += _score_by_min(pct, pct_bands)
+        overheat_stretch += (
+            float(overheat_stretch_rules["ret_3d_bonus"]["score"])
+            if (fact.ret_3d or -999.0) >= float(overheat_stretch_rules["ret_3d_bonus"]["threshold"])
+            else 0.0
+        )
+        overheat_stretch += (
+            float(overheat_stretch_rules["ret_5d_bonus"]["score"])
+            if (fact.ret_5d or -999.0) >= float(overheat_stretch_rules["ret_5d_bonus"]["threshold"])
+            else 0.0
+        )
+        overheat_stretch += (
+            float(overheat_stretch_rules["ret_10d_bonus"]["score"])
+            if (fact.ret_10d or -999.0) >= float(overheat_stretch_rules["ret_10d_bonus"]["threshold"])
+            else 0.0
+        )
+        overheat_stretch += _score_by_min(float(fact.ret_20d or -999.0), overheat_stretch_rules["ret_20d_bands"])
+        overheat_stretch += (
+            float(overheat_stretch_rules["turnover_bonus"]["score"])
+            if turnover_rate >= float(overheat_stretch_rules["turnover_bonus"]["threshold"])
+            else 0.0
+        )
+        overheat_stretch += (
+            float(overheat_stretch_rules["amplitude_bonus"]["score"])
+            if amplitude >= float(overheat_stretch_rules["amplitude_bonus"]["threshold"])
+            else 0.0
+        )
+        overheat_stretch = min(float(overheat_stretch_rules["cap"]), overheat_stretch)
 
         overheat_relative = 0.0
-        overheat_relative += 1.0 if (relative_to_theme or 0.0) >= 0.08 else 0.7 if (relative_to_theme or 0.0) >= overheat_relative_threshold else 0.4
-        overheat_relative += 0.5 if concept_support >= 4 else 0.2 if concept_support >= 1 else 0.0
-        overheat_relative = min(1.5, overheat_relative)
+        relative_bands = []
+        for band in overheat_relative_rules["relative_to_theme_bands"]:
+            patched_band = dict(band)
+            if float(band["min"]) == 0.0:
+                patched_band["min"] = overheat_relative_threshold
+            relative_bands.append(patched_band)
+        overheat_relative += _score_by_min((relative_to_theme or 0.0), relative_bands)
+        overheat_relative += _score_by_min(float(concept_support), overheat_relative_rules["concept_support_bands"])
+        overheat_relative = min(float(overheat_relative_rules["cap"]), overheat_relative)
 
         overheat_research = 0.0
-        overheat_research += 0.55 if fact.onepage_path else 0.2
-        overheat_research += 0.45 if fact.company_card_path else 0.1
-        overheat_research += min(0.55, fact.research_coverage_score * 0.65)
-        overheat_research += min(0.7, float(fact.recent_intel_mentions) / 180.0)
-        overheat_research = min(1.5, overheat_research)
+        overheat_research += (
+            float(overheat_research_rules["onepage_present"])
+            if fact.onepage_path
+            else float(overheat_research_rules["onepage_absent"])
+        )
+        overheat_research += (
+            float(overheat_research_rules["company_card_present"])
+            if fact.company_card_path
+            else float(overheat_research_rules["company_card_absent"])
+        )
+        overheat_research += min(
+            float(overheat_research_rules["coverage_cap"]),
+            fact.research_coverage_score * float(overheat_research_rules["coverage_multiplier"]),
+        )
+        overheat_research += min(
+            float(overheat_research_rules["intel_mentions_cap"]),
+            float(fact.recent_intel_mentions) / float(overheat_research_rules["intel_mentions_divisor"]),
+        )
+        overheat_research = min(float(overheat_research_rules["cap"]), overheat_research)
 
         overheat_tape = 0.0
-        overheat_tape += 0.9 if abs(pct - pct_from_open) <= 0.01 and range_position >= 0.85 else 0.6 if pct_from_open < pct * 0.7 else 0.4
-        overheat_tape += 0.6 if (fact.bid_ask_imbalance or 0.0) <= -0.3 else 0.4 if (fact.bid_ask_imbalance or 0.0) <= 0.1 else 0.2
-        overheat_tape += 0.5 if money_pace_ratio >= 3.0 else 0.3 if money_pace_ratio >= 1.5 else 0.1
-        overheat_tape += 0.3 if (main_net_inflow < 0 or large_flow_net < 0) else 0.0
-        overheat_tape = min(2.0, overheat_tape)
+        extension_gate = overheat_tape_rules["extension_gate"]
+        if (
+            abs(pct - pct_from_open) <= float(extension_gate["pct_vs_open_abs_max"])
+            and range_position >= float(extension_gate["range_position_min"])
+        ):
+            overheat_tape += float(extension_gate["score"])
+        elif pct_from_open < pct * float(overheat_tape_rules["open_lag_ratio_max"]):
+            overheat_tape += float(overheat_tape_rules["open_lag_score"])
+        else:
+            overheat_tape += float(overheat_tape_rules["fallback_score"])
+        overheat_tape += _score_by_max(float(fact.bid_ask_imbalance or 0.0), overheat_tape_rules["bid_ask_imbalance_bands"])
+        overheat_tape += _score_by_min(money_pace_ratio, overheat_tape_rules["money_pace_bands"])
+        overheat_tape += (
+            float(overheat_tape_rules["negative_flow_bonus"])
+            if (main_net_inflow < 0 or large_flow_net < 0)
+            else 0.0
+        )
+        overheat_tape = min(float(overheat_tape_rules["cap"]), overheat_tape)
 
         overheat_persistence = 0.0
         ret20 = float(fact.ret_20d or 0.0)
-        if ret20 >= 0.50:
-            overheat_persistence += 0.18
-        elif ret20 >= 0.40:
-            overheat_persistence += 0.12
-        elif ret20 >= 0.30:
-            overheat_persistence += 0.08
+        overheat_persistence += _score_by_min(ret20, overheat_persistence_rules["ret_20d_bands"])
+        overheat_persistence += _score_by_min(turnover_rate, overheat_persistence_rules["turnover_bands"])
+        overheat_persistence += _score_by_min(amplitude, overheat_persistence_rules["amplitude_bands"])
 
-        if turnover_rate >= 0.20:
-            overheat_persistence += 0.12
-        elif turnover_rate >= 0.12:
-            overheat_persistence += 0.06
-
-        if amplitude >= 0.14:
-            overheat_persistence += 0.08
-        elif amplitude >= 0.10:
-            overheat_persistence += 0.04
-
-        if ret20 < 0.30 and turnover_rate < 0.12 and amplitude < 0.12:
-            overheat_persistence -= 0.12
+        calm_reset_gate = overheat_persistence_rules["calm_reset_gate"]
+        if (
+            ret20 < float(calm_reset_gate["ret_20d_max"])
+            and turnover_rate < float(calm_reset_gate["turnover_max"])
+            and amplitude < float(calm_reset_gate["amplitude_max"])
+        ):
+            overheat_persistence -= float(calm_reset_gate["penalty"])
 
         best_concept_name = str(fact.best_concept or "").strip()
-        if best_concept_name == "AIGC概念":
-            if concept_support <= 1:
-                overheat_persistence -= 0.14
-            elif ret20 < 0.20:
-                overheat_persistence -= 0.12
+        for adjustment in overheat_persistence_rules["concept_adjustments"]:
+            if best_concept_name != str(adjustment["concept_name"]):
+                continue
+            if "concept_support_max" in adjustment and concept_support <= int(adjustment["concept_support_max"]):
+                overheat_persistence -= float(adjustment["penalty"])
+            elif "ret_20d_max" in adjustment and ret20 < float(adjustment["ret_20d_max"]):
+                overheat_persistence -= float(adjustment["penalty"])
 
         overheat_score = (overheat_regime + overheat_stretch + overheat_relative + overheat_research + overheat_tape) / 10.0
         overheat_score = max(0.0, overheat_score + overheat_persistence)
 
         weakness_score = (
-            0.26 * theme_score
-            + 0.22 * (1.0 - fact.pct_chg_rank)
-            + 0.18 * (1.0 - range_position)
-            + 0.16 * (1.0 - flow_score)
-            + 0.10 * fact.amplitude_rank
-            + 0.08 * min(1.0, concept_support / 3.0)
+            float(RISK_WEIGHTS["weakness_theme"]) * theme_score
+            + float(RISK_WEIGHTS["weakness_pct_rank"]) * (1.0 - fact.pct_chg_rank)
+            + float(RISK_WEIGHTS["weakness_range_position"]) * (1.0 - range_position)
+            + float(RISK_WEIGHTS["weakness_flow_score"]) * (1.0 - flow_score)
+            + float(RISK_WEIGHTS["weakness_amplitude_rank"]) * fact.amplitude_rank
+            + float(RISK_WEIGHTS["weakness_concept_support"]) * min(1.0, concept_support / 3.0)
         )
 
         if (
-            theme_score >= 0.55
+            theme_score >= float(overheat_entry_gates["theme_score_min"])
             and (
                 pct >= overheat_intraday_threshold
-                or (fact.ret_3d or -999.0) >= 0.12
-                or (fact.ret_5d or -999.0) >= 0.18
-                or (fact.ret_10d or -999.0) >= 0.28
+                or (fact.ret_3d or -999.0) >= float(overheat_stretch_rules["ret_3d_bonus"]["threshold"])
+                or (fact.ret_5d or -999.0) >= float(overheat_stretch_rules["ret_5d_bonus"]["threshold"])
+                or (fact.ret_10d or -999.0) >= float(overheat_stretch_rules["ret_10d_bonus"]["threshold"])
             )
             and (relative_to_theme or 0.0) >= overheat_relative_threshold
-            and overheat_score >= 0.52
+            and overheat_score >= float(RISK_THRESHOLDS["overheat_score_gate"])
         ):
             reason = (
                 f"{theme_name or '热门主线'}内明显超涨，较主题均值偏离{_fmt_pct(relative_to_theme)}，"
@@ -243,13 +338,13 @@ def compute_risk_surveillance(
             continue
 
         if (
-            theme_score >= 0.55
+            theme_score >= float(overheat_entry_gates["theme_score_min"])
             and pct <= weak_intraday_threshold
             and pct_from_open <= weak_from_open_threshold
-            and range_position <= 0.35
+            and range_position <= float(overheat_entry_gates["warning_range_position_max"])
             and (relative_to_theme or 0.0) <= weak_relative_threshold
-            and flow_score <= 0.40
-            and weakness_score >= 0.62
+            and flow_score <= float(overheat_entry_gates["warning_flow_score_max"])
+            and weakness_score >= float(RISK_THRESHOLDS["warning_score_gate"])
         ):
             reason = (
                 f"{theme_name or '热门主线'}内部分化，这只票相对主题落后{_fmt_pct(abs(relative_to_theme or 0.0))}，"
@@ -272,11 +367,11 @@ def compute_risk_surveillance(
             continue
 
         if (
-            pct < -0.04
-            and pct_from_open <= -0.03
-            and range_position <= 0.20
-            and flow_score <= 0.30
-            and weakness_score >= 0.64
+            pct < float(overheat_entry_gates["weak_pct_max"])
+            and pct_from_open <= float(overheat_entry_gates["weak_open_ret_max"])
+            and range_position <= float(overheat_entry_gates["weak_range_position_max"])
+            and flow_score <= float(overheat_entry_gates["weak_flow_score_max"])
+            and weakness_score >= float(RISK_THRESHOLDS["weak_score_gate"])
         ):
             reason = (
                 f"价格和资金同步转弱，涨幅{_fmt_pct(fact.pct_chg_prev_close)}，"
@@ -305,7 +400,12 @@ def compute_risk_surveillance(
 
     picked: list[CandidateItem] = []
     used_symbols: set[str] = set()
-    overheat_quota = min(4 if market.market_regime == "trend_expansion" else max(3, risk_limit // 2), risk_limit)
+    overheat_quota = min(
+        int(RISK_QUOTA["trend_expansion_overheat_quota"])
+        if market.market_regime == "trend_expansion"
+        else max(int(RISK_QUOTA["default_overheat_quota_floor"]), risk_limit // 2),
+        risk_limit,
+    )
 
     for bucket, quota in ((overheat_candidates, overheat_quota), (weak_candidates, risk_limit)):
         for _, _, item in bucket:

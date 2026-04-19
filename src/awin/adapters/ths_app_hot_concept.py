@@ -1,17 +1,22 @@
+"""ths_app_hot_concept interface.
+
+Reads the THS app hot-concept snapshot table and adds the app-side concept heat
+ranking overlay used by the market-understanding layer.
+"""
+
 from __future__ import annotations
 
-import json
-import re
 from datetime import datetime
 from pathlib import Path
 
 from awin.adapters.base import DbBackedAdapter, SnapshotRequest
 from awin.adapters.contracts import SourceHealth, ThsHotConceptRow
 from awin.config import get_app_config
+from awin.utils.structured_config import load_structured_config
 
 
 def _canonical_mapping(overlay_config_path: Path) -> tuple[set[str], dict[str, str]]:
-    payload = json.loads(overlay_config_path.read_text(encoding="utf-8"))
+    payload = load_structured_config(overlay_config_path, label="overlay config")
     whitelist = {str(item) for item in payload.get("concept_whitelist", []) if str(item).strip()}
     aliases = payload.get("concept_aliases", {})
     alias_to_canonical: dict[str, str] = {}
@@ -36,28 +41,8 @@ def _canonicalize(name: str | None, *, whitelist: set[str], alias_to_canonical: 
 def _to_float(value) -> float | None:
     if value in {None, ""}:
         return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    text = str(value).strip().replace(",", "")
-    if not text:
-        return None
-    sign = -1.0 if text.startswith("-") else 1.0
-    text = text.lstrip("+-")
-    multiplier = 1.0
-    if text.endswith("%"):
-        multiplier = 0.01
-        text = text[:-1]
-    elif text.endswith("万亿"):
-        multiplier = 1e12
-        text = text[:-2]
-    elif text.endswith("亿"):
-        multiplier = 1e8
-        text = text[:-1]
-    elif text.endswith("万"):
-        multiplier = 1e4
-        text = text[:-1]
     try:
-        return sign * float(text) * multiplier
+        return float(value)
     except (TypeError, ValueError):
         return None
 
@@ -65,22 +50,16 @@ def _to_float(value) -> float | None:
 def _to_int(value) -> int | None:
     if value in {None, ""}:
         return None
-    if isinstance(value, int):
-        return value
-    text = str(value).strip()
-    if not text:
-        return None
-    match = re.search(r"-?\d+", text)
-    if match is None:
-        return None
     try:
-        return int(match.group(0))
+        return int(value)
     except (TypeError, ValueError):
         return None
 
 
-class ThsCliHotConceptAdapter(DbBackedAdapter):
-    source_name = "ths_cli_hot_concept"
+class ThsAppHotConceptAdapter(DbBackedAdapter):
+    """Load the latest THS app hot-concept batch before the cutoff."""
+
+    source_name = "ths_app_hot_concept"
 
     def __init__(self, overlay_config_path: Path | None = None) -> None:
         config = get_app_config()
@@ -99,40 +78,28 @@ class ThsCliHotConceptAdapter(DbBackedAdapter):
         cutoff = datetime.fromisoformat(request.analysis_snapshot_ts.replace("Z", "+00:00"))
         cutoff_naive = cutoff.replace(tzinfo=None)
         sql = """
-        with candidate_batches as (
-          select distinct batch_ts
-          from stg.ths_cli_hot_concept
-          where trade_date = %(trade_date)s::date
-            and batch_ts <= %(cutoff_naive)s::timestamp
+        with best_batch as (
+          select max(created_at) as batch_ts
+          from stg.ths_app_hot_concept_trade
+          where created_at::date = %(trade_date)s::date
+            and created_at <= %(cutoff_naive)s::timestamp
         ), chosen as (
-          select batch_ts
-          from candidate_batches
-          order by batch_ts desc
-          limit 2
-        ), fallback as (
-          select distinct batch_ts
-          from stg.ths_cli_hot_concept
-          where trade_date = %(trade_date)s::date
-          order by batch_ts desc
-          limit 2
+          select coalesce(
+            (select batch_ts from best_batch),
+            (select max(created_at) from stg.ths_app_hot_concept_trade where created_at::date = %(trade_date)s::date),
+            (select max(created_at) from stg.ths_app_hot_concept_trade)
+          ) as batch_ts
         )
         select
-          trade_date::text as trade_date,
-          batch_ts::text as batch_ts,
-          concept_name,
-          change_pct,
-          speed_1min,
-          main_net_amount,
-          limit_up_count,
-          rising_count,
-          falling_count,
-          leading_stock
-        from stg.ths_cli_hot_concept
-        where batch_ts in (
-          select batch_ts from chosen
-          union
-          select batch_ts from fallback
-        )
+          created_at::date::text as trade_date,
+          created_at::text as batch_ts,
+          plate_name as concept_name,
+          rank as concept_rank,
+          hot_score as concept_hot_score,
+          hot_rank_chg as concept_rank_change,
+          limit_up_tag
+        from stg.ths_app_hot_concept_trade
+        where created_at = (select batch_ts from chosen)
         """
         return sql, {
             "trade_date": request.trade_date,
@@ -155,17 +122,14 @@ class ThsCliHotConceptAdapter(DbBackedAdapter):
                 continue
             rows.append(
                 ThsHotConceptRow(
-                    source_table="stg.ths_cli_hot_concept",
+                    source_table="stg.ths_app_hot_concept_trade",
                     trade_date=payload.get("trade_date"),
                     batch_ts=str(payload["batch_ts"]),
                     concept_name=canonical_name,
-                    limit_up_count=_to_int(payload.get("limit_up_count")),
-                    rising_count=_to_int(payload.get("rising_count")),
-                    falling_count=_to_int(payload.get("falling_count")),
-                    leading_stock=str(payload.get("leading_stock") or "").strip() or None,
-                    change_pct=_to_float(payload.get("change_pct")),
-                    speed_1min=_to_float(payload.get("speed_1min")),
-                    main_net_amount=_to_float(payload.get("main_net_amount")),
+                    concept_rank=_to_int(payload.get("concept_rank")),
+                    concept_hot_score=_to_float(payload.get("concept_hot_score")),
+                    concept_rank_change=_to_int(payload.get("concept_rank_change")),
+                    limit_up_tag=str(payload.get("limit_up_tag") or "").strip() or None,
                 )
             )
         return rows

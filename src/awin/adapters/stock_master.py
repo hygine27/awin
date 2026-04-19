@@ -1,3 +1,9 @@
+"""stock_master interface.
+
+Reads the local A-share master universe file and exposes the static stock pool
+used by downstream snapshot, style and watchlist calculations.
+"""
+
 from __future__ import annotations
 
 import json
@@ -10,6 +16,8 @@ from awin.utils.symbols import normalize_stock_code
 
 
 class StockMasterAdapter(FileBackedAdapter):
+    """Load the local stock master file as the static cross-market universe."""
+
     source_name = "stock_master"
 
     def __init__(self, root: Path | None = None) -> None:

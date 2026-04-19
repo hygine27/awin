@@ -13,9 +13,9 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from awin.adapters import (
-    DcfSnapshotAdapter,
+    DcfHqZjSnapshotAdapter,
+    QmtAshareSnapshot5mAdapter,
     QmtBar1dAdapter,
-    QmtSnapshotAdapter,
     ResearchCoverageAdapter,
     SnapshotRequest,
     StockMasterAdapter,
@@ -151,10 +151,10 @@ company_role: 龙头
             analysis_snapshot_ts="2026-04-16T10:35:00",
         )
 
-        qmt_sql, qmt_params = QmtSnapshotAdapter().build_query(request)
+        qmt_sql, qmt_params = QmtAshareSnapshot5mAdapter().build_query(request)
         qmt_bar_sql, qmt_bar_params = QmtBar1dAdapter().build_query(["000001.SZ"], "2026-04-16", "2026-04-30")
-        dcf_batch_sql, dcf_batch_params = DcfSnapshotAdapter().build_batch_query(request)
-        dcf_baseline_sql, dcf_baseline_params = DcfSnapshotAdapter().build_baseline_query(request)
+        dcf_batch_sql, dcf_batch_params = DcfHqZjSnapshotAdapter().build_batch_query(request)
+        dcf_baseline_sql, dcf_baseline_params = DcfHqZjSnapshotAdapter().build_baseline_query(request)
 
         self.assertIn("stg.qmt_ashare_snapshot_5m", qmt_sql)
         self.assertIn("snapshot_time <=", qmt_sql)
@@ -176,14 +176,14 @@ company_role: 龙头
             analysis_snapshot_ts="2026-04-16T10:35:00",
         )
 
-        with patch.object(QmtSnapshotAdapter, "_query_rows", return_value=None):
-            self.assertEqual(QmtSnapshotAdapter().load_rows(request), [])
-        with patch.object(DcfSnapshotAdapter, "_connect_with_error", return_value=(object(), None)):
-            with patch.object(DcfSnapshotAdapter, "_query_rows", return_value=None):
-                self.assertEqual(DcfSnapshotAdapter().load_rows(request), [])
+        with patch.object(QmtAshareSnapshot5mAdapter, "_query_rows", return_value=None):
+            self.assertEqual(QmtAshareSnapshot5mAdapter().load_rows(request), [])
+        with patch.object(DcfHqZjSnapshotAdapter, "_connect_with_error", return_value=(object(), None)):
+            with patch.object(DcfHqZjSnapshotAdapter, "_query_rows", return_value=None):
+                self.assertEqual(DcfHqZjSnapshotAdapter().load_rows(request), [])
 
     def test_dcf_guard_marks_stale_or_low_coverage_as_degraded(self) -> None:
-        adapter = DcfSnapshotAdapter(max_freshness_minutes=20.0, min_rows_abs=5000, min_completeness_ratio=0.92)
+        adapter = DcfHqZjSnapshotAdapter(max_freshness_minutes=20.0, min_rows_abs=5000, min_completeness_ratio=0.92)
         request = SnapshotRequest(
             trade_date="2026-04-16",
             snapshot_time="10:35:00",
@@ -208,7 +208,7 @@ company_role: 龙头
         self.assertIn("low_coverage", health.detail)
 
     def test_dcf_rows_are_normalized_to_exchange_suffix_symbols(self) -> None:
-        adapter = DcfSnapshotAdapter()
+        adapter = DcfHqZjSnapshotAdapter()
         request = SnapshotRequest(
             trade_date="2026-04-16",
             snapshot_time="10:35:00",
@@ -252,7 +252,7 @@ company_role: 龙头
         self.assertEqual(rows[0].main_net_inflow, 1000000.0)
 
     def test_dcf_percentage_like_fields_are_normalized_to_ratios(self) -> None:
-        adapter = DcfSnapshotAdapter()
+        adapter = DcfHqZjSnapshotAdapter()
         request = SnapshotRequest(
             trade_date="2026-04-16",
             snapshot_time="10:35:00",

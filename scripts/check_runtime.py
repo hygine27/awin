@@ -10,7 +10,7 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from awin.adapters import DcfSnapshotAdapter, QmtSnapshotAdapter, ResearchCoverageAdapter, StockMasterAdapter, ThsConceptAdapter, ThsMarketOverviewAdapter
+from awin.adapters import DcfHqZjSnapshotAdapter, QmtAshareSnapshot5mAdapter, ResearchCoverageAdapter, StockMasterAdapter, ThsConceptAdapter, ThsMarketOverviewAdapter
 from awin.config import ConfigError, ENV_PATH, get_app_config
 
 
@@ -65,8 +65,8 @@ def main() -> None:
         "stock_master": StockMasterAdapter().health().to_dict(),
         "ths_concepts": ThsConceptAdapter().health().to_dict(),
         "research": ResearchCoverageAdapter().health().to_dict(),
-        "qmt": QmtSnapshotAdapter().health().to_dict(),
-        "dcf": DcfSnapshotAdapter().health().to_dict(),
+        "qmt_ashare_snapshot_5m": QmtAshareSnapshot5mAdapter().health().to_dict(),
+        "dcf_hq_zj_snapshot": DcfHqZjSnapshotAdapter().health().to_dict(),
         "ths_market_overview": ThsMarketOverviewAdapter().health().to_dict(),
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))

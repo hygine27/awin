@@ -1,3 +1,13 @@
+"""dcf_hq_zj_snapshot adapter.
+
+对应东方财富客户端的两张盘中增强表：
+- stg.dcf_cli_hq
+- stg.dcf_cli_zj
+
+用途是先按同一 batch_ts 配对两张表，再输出一份可直接用于盘中分析的增强快照，
+补充换手率、量比、振幅、市值和资金流等字段。
+"""
+
 from __future__ import annotations
 
 import math
@@ -71,8 +81,10 @@ def _normalize_ratio_field(field_name: str, value: float | None) -> float | None
     return value
 
 
-class DcfSnapshotAdapter(DbBackedAdapter):
-    source_name = "dcf_snapshot"
+class DcfHqZjSnapshotAdapter(DbBackedAdapter):
+    """读取 DCF 行情表与资金表配对后的最近完整增强批次。"""
+
+    source_name = "dcf_hq_zj_snapshot"
 
     def __init__(
         self,

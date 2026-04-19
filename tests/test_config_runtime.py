@@ -20,6 +20,8 @@ class ConfigRuntimeTestCase(unittest.TestCase):
         config = get_app_config()
         self.assertTrue(str(config.sqlite_path))
         self.assertTrue(str(config.stock_master_path))
+        self.assertTrue(str(config.style_profile_config_path))
+        self.assertTrue(str(config.opportunity_config_path))
         self.assertTrue(str(config.ths_market_overview_path))
         self.assertTrue(config.qt_db.host)
         self.assertTrue(config.fin_db.host)

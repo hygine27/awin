@@ -1,3 +1,9 @@
+"""stg.qmt_ashare_snapshot_5m adapter.
+
+对应 QMT 的 A 股 5 分钟快照表。
+用途是按分析时点回看当日最近一批可用快照，作为单轮盘中分析的主行情底座。
+"""
+
 from __future__ import annotations
 
 from awin.adapters.base import DbBackedAdapter, SnapshotRequest
@@ -5,8 +11,10 @@ from awin.adapters.contracts import QmtSnapshotRow, SourceHealth
 from awin.config import get_app_config
 
 
-class QmtSnapshotAdapter(DbBackedAdapter):
-    source_name = "qmt_snapshot"
+class QmtAshareSnapshot5mAdapter(DbBackedAdapter):
+    """读取 stg.qmt_ashare_snapshot_5m 的最近可用快照。"""
+
+    source_name = "qmt_ashare_snapshot_5m"
 
     def __init__(self) -> None:
         super().__init__(db_config=get_app_config().qt_db, dsn_label="qt")
