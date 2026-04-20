@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -185,6 +186,22 @@ def _average(values: list[float]) -> float | None:
     return float(sum(values) / len(values))
 
 
+def _fmt_amount_yi(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    amount_yi = float(value) / 100000000
+    return f"{amount_yi:+.2f}亿"
+
+
+def _fmt_amount_from_wan_yuan(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    amount_wan = float(value)
+    if abs(amount_wan) >= 10000:
+        return f"{amount_wan / 10000:+.2f}亿"
+    return f"{amount_wan:+.1f}万"
+
+
 def _range_position(last_price: float | None, high_price: float | None, low_price: float | None) -> float | None:
     if last_price is None or high_price is None or low_price is None:
         return None
@@ -263,6 +280,45 @@ def _build_percentile_map(rows: list[dict], field: str, *, reverse: bool = False
     return out
 
 
+def _build_named_percentile_map(
+    rows: list[dict],
+    *,
+    name_field: str,
+    value_field: str,
+    reverse: bool = False,
+) -> dict[str, float]:
+    valid = [(str(row[name_field]), row.get(value_field)) for row in rows if row.get(value_field) is not None]
+    if not valid:
+        return {}
+    valid.sort(key=lambda item: item[1], reverse=reverse)
+    total = len(valid)
+    return {name: idx / total for idx, (name, _) in enumerate(valid, start=1)}
+
+
+def _resolve_active_direction(meta_rows: list[dict]) -> tuple[str | None, list[str], str]:
+    if not meta_rows:
+        return None, [], "dominant"
+    top_names = [str(row["meta_theme"]) for row in meta_rows[:4]]
+    leader_score = float(meta_rows[0].get("score") or 0.0)
+    third_score = float(meta_rows[2].get("score") or 0.0) if len(meta_rows) >= 3 else None
+    fourth_score = float(meta_rows[3].get("score") or 0.0) if len(meta_rows) >= 4 else None
+    if third_score is not None and third_score >= leader_score - 0.12:
+        return "混合轮动", top_names, "mixed_rotation"
+    if fourth_score is not None and fourth_score >= leader_score - 0.14:
+        return "混合轮动", top_names, "mixed_rotation"
+    return top_names[0], top_names, "dominant"
+
+
+def _parse_batch_ts(value: str | None) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def _latest_rows_by_source(
     hot_concepts: list[ThsHotConceptRow],
     source_table: str,
@@ -280,9 +336,25 @@ def _latest_rows_by_source(
 
 def _derive_board_score_maps(
     hot_concepts: list[ThsHotConceptRow],
+    *,
+    app_max_lag_minutes: float | None = None,
 ) -> tuple[dict[str, float], dict[str, dict[str, float | int | str | None]], list[str]]:
     app_latest, _ = _latest_rows_by_source(hot_concepts, "stg.ths_app_hot_concept_trade")
     cli_latest, cli_previous = _latest_rows_by_source(hot_concepts, "stg.ths_cli_hot_concept")
+
+    if app_latest and app_max_lag_minutes is not None and app_max_lag_minutes >= 0:
+        latest_reference_ts = max(
+            (_parse_batch_ts(row.batch_ts) for row in hot_concepts),
+            default=None,
+        )
+        latest_app_ts = max(
+            (_parse_batch_ts(row.batch_ts) for row in app_latest.values()),
+            default=None,
+        )
+        if latest_reference_ts is not None and latest_app_ts is not None:
+            lag_minutes = (latest_reference_ts - latest_app_ts).total_seconds() / 60.0
+            if lag_minutes > float(app_max_lag_minutes):
+                app_latest = {}
 
     app_rows = [
         {
@@ -421,6 +493,7 @@ def compute_market_understanding(
     stock_score_weight = float(overlay_thresholds.get("stock_score_weight", 0.78))
     board_score_weight = float(overlay_thresholds.get("board_score_weight", 0.22))
     meta_theme_top_concepts = int(overlay_thresholds.get("meta_theme_top_concepts", 3))
+    app_max_lag_minutes = float(overlay_thresholds.get("app_max_lag_minutes", 45.0))
 
     for qmt in qmt_snapshot:
         stock_code = normalize_stock_code(qmt.stock_code or qmt.symbol)
@@ -440,6 +513,7 @@ def compute_market_understanding(
             "stock_name": master.stock_name or qmt.symbol,
             "industry": master.industry,
             "market": master.market,
+            "amount": float(qmt.amount) if qmt.amount is not None else None,
             "pct_chg_prev_close": pct,
             "range_position": range_position,
             "volume_ratio": volume_ratio,
@@ -522,7 +596,10 @@ def compute_market_understanding(
         )
     concept_rows = _score_buckets(concept_rows, score_field="stock_composite_score", score_weights=style_score_weights)
 
-    board_score_map, board_detail_map, _ = _derive_board_score_maps(ths_hot_concepts or [])
+    board_score_map, board_detail_map, _ = _derive_board_score_maps(
+        ths_hot_concepts or [],
+        app_max_lag_minutes=app_max_lag_minutes,
+    )
     for idx, row in enumerate(concept_rows, start=1):
         row["stock_composite_rank"] = idx
         board_score = board_score_map.get(row["concept_name"], row["stock_composite_score"])
@@ -597,15 +674,71 @@ def compute_market_understanding(
         if meta_theme:
             grouped_concepts[str(meta_theme)].append(row)
     for meta_theme, members in grouped_concepts.items():
-        top_members = sorted(members, key=lambda item: (item["overlay_score"], item["eq_return"] or -999), reverse=True)[:meta_theme_top_concepts]
+        top_members = sorted(members, key=lambda item: (item["overlay_score"], item["eq_return"] or -999), reverse=True)[
+            :meta_theme_top_concepts
+        ]
+        theme_stock_members = [item for item in stock_rows if meta_theme in item.get("meta_themes", [])]
+        theme_pct_values = [item["pct_chg_prev_close"] for item in theme_stock_members if item["pct_chg_prev_close"] is not None]
+        theme_amount_sum = sum(float(item.get("amount") or 0.0) for item in theme_stock_members)
+        active_concept_count = sum(
+            1
+            for item in members
+            if int(item.get("overlay_rank") or 999) <= 20 or float(item.get("overlay_score") or 0.0) >= 0.80
+        )
+        live_cli_concept_count = sum(1 for item in members if item.get("concept_name") in latest_cli)
+        theme_acceleration_scores = [
+            float(item["acceleration_score"])
+            for item in acceleration_candidates
+            if item.get("concept_name") in {member["concept_name"] for member in members}
+            and item.get("acceleration_score") is not None
+        ]
         meta_rows.append(
             {
                 "meta_theme": meta_theme,
-                "score": round(_average([item["overlay_score"] for item in top_members]) or 0.0, 4),
-                "eq_return": _average([item["eq_return"] for item in top_members if item["eq_return"] is not None]),
+                "concept_score": round(_average([item["overlay_score"] for item in top_members]) or 0.0, 4),
+                "eq_return": _average(theme_pct_values),
+                "stock_count": len(theme_stock_members),
+                "amount_sum": theme_amount_sum,
+                "active_concept_count": active_concept_count,
+                "live_cli_concept_count": live_cli_concept_count,
+                "theme_acceleration_score": max(theme_acceleration_scores) if theme_acceleration_scores else None,
+                "strong_ratio": _safe_div(
+                    sum((item["pct_chg_prev_close"] or 0.0) >= strong_move_pct for item in theme_stock_members),
+                    len(theme_stock_members),
+                ),
                 "strongest_concepts": [item["concept_name"] for item in top_members[:3]],
             }
         )
+
+    if meta_rows:
+        concept_rank_map = _build_named_percentile_map(meta_rows, name_field="meta_theme", value_field="concept_score")
+        eq_return_rank_map = _build_named_percentile_map(meta_rows, name_field="meta_theme", value_field="eq_return")
+        stock_count_rank_map = _build_named_percentile_map(meta_rows, name_field="meta_theme", value_field="stock_count")
+        amount_rank_map = _build_named_percentile_map(meta_rows, name_field="meta_theme", value_field="amount_sum")
+        active_concept_rank_map = _build_named_percentile_map(
+            meta_rows, name_field="meta_theme", value_field="active_concept_count"
+        )
+        live_cli_concept_rank_map = _build_named_percentile_map(
+            meta_rows, name_field="meta_theme", value_field="live_cli_concept_count"
+        )
+        acceleration_rank_map = _build_named_percentile_map(
+            meta_rows, name_field="meta_theme", value_field="theme_acceleration_score"
+        )
+        strong_ratio_rank_map = _build_named_percentile_map(meta_rows, name_field="meta_theme", value_field="strong_ratio")
+        for row in meta_rows:
+            meta_theme = str(row["meta_theme"])
+            row["score"] = round(
+                0.45 * concept_rank_map.get(meta_theme, 0.0)
+                + 0.15 * active_concept_rank_map.get(meta_theme, 0.0)
+                + 0.10 * live_cli_concept_rank_map.get(meta_theme, 0.0)
+                + 0.10 * amount_rank_map.get(meta_theme, 0.0)
+                + 0.05 * stock_count_rank_map.get(meta_theme, 0.0)
+                + 0.10 * strong_ratio_rank_map.get(meta_theme, 0.0)
+                + 0.05 * acceleration_rank_map.get(meta_theme, 0.0)
+                + 0.10 * eq_return_rank_map.get(meta_theme, 0.0),
+                4,
+            )
+
     meta_rows.sort(key=lambda item: (item["score"], item["eq_return"] or -999), reverse=True)
     top_meta_themes = [
         MetaThemeItem(
@@ -647,9 +780,15 @@ def compute_market_understanding(
     strongest_concepts = [item["concept_name"] for item in concept_rows[:5]]
     acceleration_concepts = [item["concept_name"] for item in acceleration_candidates[:3]]
     top_meta_theme_names = [item.meta_theme for item in top_meta_themes[:3]]
-
+    active_direction, active_direction_candidates, active_direction_mode = _resolve_active_direction(meta_rows)
+    direction_label = "活跃方向" if active_direction_mode == "mixed_rotation" or market_regime == "mixed_rotation" else "主导方向"
+    direction_value = (
+        " / ".join(active_direction_candidates[:3])
+        if active_direction_mode == "mixed_rotation"
+        else (active_direction or (confirmed_style or "暂无"))
+    )
     summary_line = (
-        f"主风格：{confirmed_style or '暂无'}｜状态：稳定｜主导方向：{top_meta_theme_names[0] if top_meta_theme_names else (confirmed_style or '暂无')}"
+        f"主风格：{confirmed_style or '暂无'}｜状态：稳定｜{direction_label}：{direction_value}"
         f"｜最强主题：{' / '.join(top_meta_theme_names) if top_meta_theme_names else '暂无'}"
     )
 
@@ -661,9 +800,14 @@ def compute_market_understanding(
         )
     if top_meta_themes:
         theme = top_meta_themes[0]
-        evidence_lines.append(
-            f"- 主线解释：{theme.meta_theme} 当前最强，细分概念看 {' / '.join(theme.strongest_concepts) if theme.strongest_concepts else '暂无'}。"
-        )
+        if active_direction_mode == "mixed_rotation":
+            evidence_lines.append(
+                f"- 活跃方向：当前更接近多线并行，候选主线为 {' / '.join(active_direction_candidates[:4]) if active_direction_candidates else '暂无'}。"
+            )
+        else:
+            evidence_lines.append(
+                f"- 主线解释：{theme.meta_theme} 当前最强，细分概念看 {' / '.join(theme.strongest_concepts) if theme.strongest_concepts else '暂无'}。"
+            )
     if fund_flow_snapshot and top_meta_themes:
         concept_flow_map = {item.concept_name: item for item in fund_flow_snapshot.concept_profiles}
         theme = top_meta_themes[0]
@@ -672,7 +816,9 @@ def compute_market_understanding(
             concept_flow = concept_flow_map.get(concept_name)
             if concept_flow is None or concept_flow.net_amount_1d is None:
                 continue
-            funded_concepts.append(f"{concept_name} 近1日净流入 {concept_flow.net_amount_1d:.0f}")
+            funded_concepts.append(
+                f"{concept_name} 近1日净流入 {_fmt_amount_from_wan_yuan(concept_flow.net_amount_1d)}"
+            )
         if funded_concepts:
             evidence_lines.append(f"- 主线资金：{'；'.join(funded_concepts)}。")
     if acceleration_concepts:
@@ -688,8 +834,8 @@ def compute_market_understanding(
     if fund_flow_snapshot and fund_flow_snapshot.market_profile and fund_flow_snapshot.market_profile.net_amount_1d is not None:
         market_flow = fund_flow_snapshot.market_profile
         evidence_lines.append(
-            f"- 市场资金：近1日市场级净流入 {market_flow.net_amount_1d:.0f}，"
-            f"超大单 {market_flow.super_large_net_1d or 0.0:.0f}，大单 {market_flow.large_order_net_1d or 0.0:.0f}。"
+            f"- 市场资金：T-1（{market_flow.trade_date}）东财主力口径净额 {_fmt_amount_yi(market_flow.net_amount_1d)}，"
+            f"其中超大单 {_fmt_amount_yi(market_flow.super_large_net_1d)}，大单 {_fmt_amount_yi(market_flow.large_order_net_1d)}。"
         )
 
     return MarketUnderstandingOutput(

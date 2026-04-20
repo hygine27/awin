@@ -126,6 +126,33 @@ M0 每轮运行的统一聚合结果应该至少包含：
 | `summary_line` | `market_understanding.summary_line` |
 | `alert_decision` / `alert_material_changes` / `alert_body` | `alert_output` |
 
+## 4.1 终端摘要输出
+
+`scripts/run_cycle.py` 当前的终端摘要输出，不再只打印一行 `summary_line`，而是统一渲染成 1 页业务摘要，固定包含：
+
+- 标题行
+- 时间
+- `结论与证据`
+- `顺风看多观察`
+- `潜在补涨观察`
+- `偏空 / 过热预警`
+- 每个 section 的首位股票解释
+- `评分说明`
+
+其中：
+
+- `结论与证据` 来自 `market_understanding.summary_line`、`market_understanding.evidence_lines` 和关键数据源健康状态
+- `顺风看多观察` 来自 `core_anchor_watchlist` + `new_long_watchlist`，并按候选强度统一重排；首位要补“为什么它是本节第一名”
+- 顺风首位解释里，要明确区分：
+  - 模块强度分：把 6 个模块原始和归一化到 10 分后的业务展示分
+  - 内部排序分：额外叠加新晋 / 主概念等奖励后的内部排序分
+- `潜在补涨观察` 来自 `catchup_watchlist`；首位要补“补涨原始分 / 近3日-10日位置 / 资金节奏”等解释
+- 补涨首位解释里，要明确区分：
+  - 补涨原始分：仅用于 catchup 候选内部排序，不是 10 分制
+  - 补涨拆解：盘口转强、位置强度、研究质量、成交承接、资金承接、相对滞涨、奖励项、惩罚项
+- `偏空 / 过热预警` 来自 `short_watchlist`；首位要补“相对主题偏离 / 近10日-20日涨幅 / 振幅 / 近1日与近5日主力金额 / 连续流出天数 / 价强资弱”解释
+- `评分说明` 作为终端摘要固定尾注，解释 `alignment / dual_support / temperature / research / tape / profile / 新晋加分 / 主概念加分`
+
 ## 5. 当前代码落点
 
 M0 输出协议当前落在：

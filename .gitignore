@@ -17,6 +17,7 @@ build/
 
 # IDE / OS noise
 .DS_Store
+._*
 .idea/
 .vscode/
 

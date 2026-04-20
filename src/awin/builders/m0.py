@@ -14,7 +14,6 @@ from awin.adapters import (
     ResearchCoverageAdapter,
     SnapshotRequest,
     StockMasterAdapter,
-    ThsAppHotConceptAdapter,
     ThsCliHotConceptAdapter,
     ThsConceptAdapter,
     ThsMarketOverviewAdapter,
@@ -93,7 +92,6 @@ def build_m0_snapshot_bundle(
 
     stock_master_adapter = StockMasterAdapter()
     ths_adapter = ThsConceptAdapter()
-    ths_app_hot_adapter = ThsAppHotConceptAdapter()
     ths_cli_hot_adapter = ThsCliHotConceptAdapter()
     research_adapter = ResearchCoverageAdapter()
     qmt_ashare_snapshot_5m_adapter = QmtAshareSnapshot5mAdapter()
@@ -113,7 +111,7 @@ def build_m0_snapshot_bundle(
 
     stock_master = stock_master_adapter.load_rows()
     ths_concepts = ths_adapter.load_rows(request)
-    ths_hot_concepts = ths_app_hot_adapter.load_rows(request) + ths_cli_hot_adapter.load_rows(request)
+    ths_hot_concepts = ths_cli_hot_adapter.load_rows(request)
     research = research_adapter.load_rows(request)
     qmt_rows = qmt_ashare_snapshot_5m_adapter.load_rows(request)
     dcf_rows, dcf_health = dcf_hq_zj_snapshot_adapter.load_rows_with_health(request)
@@ -220,7 +218,6 @@ def build_m0_snapshot_bundle(
         source_health={
             "stock_master": stock_master_adapter.health().to_dict(),
             "ths_concepts": ths_adapter.health().to_dict(),
-            "ths_app_hot_concept": ths_app_hot_adapter.health().to_dict(),
             "ths_cli_hot_concept": ths_cli_hot_adapter.health().to_dict(),
             "research": research_adapter.health().to_dict(),
             "qmt_ashare_snapshot_5m": qmt_ashare_snapshot_5m_adapter.health().to_dict(),

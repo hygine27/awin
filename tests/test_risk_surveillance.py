@@ -47,6 +47,7 @@ class RiskSurveillanceTestCase(unittest.TestCase):
         self.assertTrue(any(item.risk_tag in {"warning", "weak"} for item in output.short_watchlist))
         overheat_item = next(item for item in output.short_watchlist if item.risk_tag == "overheat")
         self.assertIn("relative_to_theme", overheat_item.metadata)
+        self.assertLessEqual(max(item.confidence_score for item in output.short_watchlist), 10.0)
 
 
 if __name__ == "__main__":

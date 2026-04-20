@@ -90,7 +90,6 @@ files / postgres sources
 | `ths_market_overview`    | 本地 transient 市场概览文件                         | `[ths_market_overview.py](/home/yh/.openclaw/workspace/projects/awin/src/awin/adapters/ths_market_overview.py)`       | 盘中抓取                | 读取盘中市场概览，形成市场环境底座                        | 指数分时、涨跌分布、涨跌停结构、昨日涨停收益等                                                                                                                                     | `market_understanding`                                      |
 | `qmt_ashare_snapshot_5m` | `qt.stg.qmt_ashare_snapshot_5m`             | `[qmt_ashare_snapshot_5m.py](/home/yh/.openclaw/workspace/projects/awin/src/awin/adapters/qmt_ashare_snapshot_5m.py)` | 5 分钟                | 取分析时点之前每只股票最近一批可用快照                      | `last_price`, `last_close`, `open_price`, `high_price`, `low_price`, `volume`, `amount`, `bid_price1`, `ask_price1`, `bid_volume1`, `ask_volume1`           | `stock_facts`, `market_understanding`                       |
 | `dcf_hq_zj_snapshot`     | `fin.stg.dcf_cli_hq` + `fin.stg.dcf_cli_zj` | `[dcf_hq_zj_snapshot.py](/home/yh/.openclaw/workspace/projects/awin/src/awin/adapters/dcf_hq_zj_snapshot.py)`         | 盘中批次                | 选择分析时点之前最近且完整的一批，并对 `hq / zj` 配对         | `turnover_rate`, `volume_ratio`, `amplitude`, `float_mkt_cap`, `total_mkt_cap`, `ret_3d`, `ret_10d`, `ret_20d`, `main_net_inflow`, `super_net`, `large_net` | `stock_facts`, `market_understanding`, 风险与机会判断              |
-| `ths_app_hot_concept`    | `fin.stg.ths_app_hot_concept_trade`         | `[ths_app_hot_concept.py](/home/yh/.openclaw/workspace/projects/awin/src/awin/adapters/ths_app_hot_concept.py)`       | 盘中批次                | 取当前时点之前最近一批 app 热概念榜，并按 overlay 规范化      | `concept_name`, `concept_rank`, `concept_hot_score`, `concept_rank_change`, `limit_up_tag`                                                                  | `market_understanding`                                      |
 | `ths_cli_hot_concept`    | `fin.stg.ths_cli_hot_concept`               | `[ths_cli_hot_concept.py](/home/yh/.openclaw/workspace/projects/awin/src/awin/adapters/ths_cli_hot_concept.py)`       | 盘中批次                | 取当前时点之前最近 1-2 个 CLI 热概念批次，并按 overlay 规范化 | `concept_name`, `change_pct`, `speed_1min`, `main_net_amount`, `limit_up_count`, `rising_count`, `falling_count`, `leading_stock`                           | `market_understanding`                                      |
 | `ts_stock_basic`         | `qt.stg.ts_stock_basic`                     | `[ts_stock_basic.py](/home/yh/.openclaw/workspace/projects/awin/src/awin/adapters/ts_stock_basic.py)`                 | 日更                  | 读取 T-1 基础属性快照                            | `ts_code`, `market`, `exchange`, `industry`, `act_ent_type`                                                                                                 | `style_profile`                                             |
 | `ts_daily_basic`         | `qt.stg.ts_daily_basic`                     | `[ts_daily_basic.py](/home/yh/.openclaw/workspace/projects/awin/src/awin/adapters/ts_daily_basic.py)`                 | 日更                  | 读取 T-1 估值与市值快照                           | `free_share`, `circ_mv`, `total_mv`, `turnover_rate`, `dv_ratio`, `dv_ttm`, `pe_ttm`, `pb`, `ps_ttm`                                                        | `style_profile`                                             |
@@ -98,9 +97,9 @@ files / postgres sources
 | `ts_fina_indicator`      | `qt.stg.ts_fina_indicator`                  | `[ts_fina_indicator.py](/home/yh/.openclaw/workspace/projects/awin/src/awin/adapters/ts_fina_indicator.py)`           | 财报更新                | 读取最近财务质量与成长字段                            | `roe`, `roe_yearly`, `roic`, `debt_to_assets`, `ocf_to_or`, `tr_yoy`, `or_yoy`, `q_sales_yoy`, `netprofit_yoy`, `dt_netprofit_yoy`                          | `style_profile`                                             |
 | `ts_moneyflow_ths`       | `qt.stg.ts_moneyflow_ths`                   | `[ts_moneyflow_ths.py](/home/yh/.openclaw/workspace/projects/awin/src/awin/adapters/ts_moneyflow_ths.py)`             | 日更，runtime 用 T-1 历史 | 读取个股历史资金流，当前已优化为数据库侧聚合优先                 | `net_amount`, `pct_change`, `net_d5_amount` 及聚合后窗口字段                                                                                                        | `fund_flow_profile`                                         |
 | `ts_moneyflow_dc`        | `qt.stg.ts_moneyflow_dc`                    | `[ts_moneyflow_dc.py](/home/yh/.openclaw/workspace/projects/awin/src/awin/adapters/ts_moneyflow_dc.py)`               | 日更，runtime 用最近有效交易日 | 读取东财个股资金结构快照                             | `net_amount_rate`, `buy_elg_amount`, `buy_lg_amount`                                                                                                        | `fund_flow_profile`                                         |
-| `ts_moneyflow_cnt_ths`   | `qt.stg.ts_moneyflow_cnt_ths`               | `[ts_moneyflow_cnt_ths.py](/home/yh/.openclaw/workspace/projects/awin/src/awin/adapters/ts_moneyflow_cnt_ths.py)`     | 日更                  | 读取概念板块历史资金流                              | `ts_code`, `name`, `trade_date`, `net_amount`, `pct_change`                                                                                                 | `fund_flow_profile`, `market_understanding`                 |
+| `ts_moneyflow_cnt_ths`   | `qt.stg.ts_moneyflow_cnt_ths`               | `[ts_moneyflow_cnt_ths.py](/home/yh/.openclaw/workspace/projects/awin/src/awin/adapters/ts_moneyflow_cnt_ths.py)`     | 日更                  | 读取概念板块历史资金流                              | `ts_code`, `name`, `trade_date`, `net_amount`, `pct_change`；当前摘要将 `net_amount` 按 `万元` 口径展示为 `万 / 亿`                                                      | `fund_flow_profile`, `market_understanding`                 |
 | `ts_moneyflow_ind_ths`   | `qt.stg.ts_moneyflow_ind_ths`               | `[ts_moneyflow_ind_ths.py](/home/yh/.openclaw/workspace/projects/awin/src/awin/adapters/ts_moneyflow_ind_ths.py)`     | 日更                  | 读取行业历史资金流                                | `ts_code`, `industry`, `trade_date`, `net_amount`, `pct_change`                                                                                             | `fund_flow_profile`, `market_understanding`                 |
-| `ts_moneyflow_mkt_dc`    | `qt.stg.ts_moneyflow_mkt_dc`                | `[ts_moneyflow_mkt_dc.py](/home/yh/.openclaw/workspace/projects/awin/src/awin/adapters/ts_moneyflow_mkt_dc.py)`       | 日更                  | 读取市场级资金流                                 | `trade_date`, `net_amount`, `net_amount_rate`, `buy_elg_amount`, `buy_lg_amount`                                                                            | `fund_flow_profile`, `market_understanding`                 |
+| `ts_moneyflow_mkt_dc`    | `qt.stg.ts_moneyflow_mkt_dc`                | `[ts_moneyflow_mkt_dc.py](/home/yh/.openclaw/workspace/projects/awin/src/awin/adapters/ts_moneyflow_mkt_dc.py)`       | 日更                  | 读取市场级资金流                                 | `trade_date`, `net_amount`, `net_amount_rate`, `buy_elg_amount`, `buy_lg_amount`；当前摘要将金额统一折算为 `亿` 展示                                                     | `fund_flow_profile`, `market_understanding`                 |
 
 
 ### 4.2 Derived Source Adapters
@@ -112,6 +111,16 @@ files / postgres sources
 | ------------------------ | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------- | --------------- |
 | `qmt_bar_1d_metrics`     | `qt.stg.qmt_bar_1d`                        | `[qmt_bar_1d_metrics.py](/home/yh/.openclaw/workspace/projects/awin/src/awin/adapters/qmt_bar_1d_metrics.py)`         | 将日线明细压缩成每股一行的 runtime 指标     | `avg_amount_20d`, `close_3d_ago`, `close_5d_ago`, `close_10d_ago`, `close_20d_ago`                   | `stock_facts`   |
 | `ts_style_daily_metrics` | `qt.stg.ts_daily` + `qt.stg.ts_adj_factor` | `[ts_style_daily_metrics.py](/home/yh/.openclaw/workspace/projects/awin/src/awin/adapters/ts_style_daily_metrics.py)` | 将历史日线与复权因子在数据库侧聚合为风格画像所需最终指标 | `avg_amount_20d`, `ret_20d`, `ret_60d`, `vol_20d`, `vol_60d`, `max_drawdown_20d`, `max_drawdown_60d` | `style_profile` |
+
+
+### 4.2A Deprecated Source
+
+以下 source 仍保留 adapter，但已经移出生产 runtime 链路。
+
+
+| Source                | Real Source                         | Adapter                                                                                                         | Current Status | Why Deprecated                                           | Allowed Use Case                    |
+| --------------------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------- | -------------- | -------------------------------------------------------- | ----------------------------------- |
+| `ths_app_hot_concept` | `fin.stg.ths_app_hot_concept_trade` | `[ths_app_hot_concept.py](/home/yh/.openclaw/workspace/projects/awin/src/awin/adapters/ths_app_hot_concept.py)` | `deprecated`   | 实盘验证显示其更新不稳定，可能只有早盘单批次，不能作为盘中实时热榜评分源 | `debug`, `preopen_attention`, 源对照排查 |
 
 
 ### 4.3 Source Health
@@ -293,13 +302,18 @@ files / postgres sources
 
 `market_understanding` 是市场层解释，不直接做股票排序。
 
+方法上需要特别注意：
+
+- `top_meta_themes` 的定位是“当前活跃方向排序”，不是无条件等于“唯一主导方向”
+- 当多条元主题得分接近时，`summary_line` 应读作“活跃方向并行”，而不是单一主线
+- 当前元主题排序不只看概念 top3 分数，也叠加主题覆盖度和成交承载
+
 主要使用：
 
 - `stock_master`
 - `qmt_ashare_snapshot_5m`
 - `dcf_hq_zj_snapshot`
 - `ths_concepts`
-- `ths_app_hot_concept`
 - `ths_cli_hot_concept`
 - `ths_market_overview`
 - `style_profile`
@@ -315,11 +329,20 @@ files / postgres sources
 | `latest_dominant_style` | label     | 当前盘面最主导风格                |
 | `market_regime`         | label     | 市场环境，如 `trend_expansion` |
 | `top_styles`            | ranking   | 风格篮子横截面得分排名              |
-| `top_meta_themes`       | ranking   | 元主题强度排名                  |
+| `top_meta_themes`       | ranking   | 元主题活跃度排名；在混合轮动时应理解为并行活跃方向列表 |
 | `strongest_concepts`    | label set | 当前最强概念                   |
 | `acceleration_concepts` | label set | 当前加速概念                   |
-| `summary_line`          | output    | 业务摘要行                    |
+| `summary_line`          | output    | 业务摘要行；会根据主线集中度在“主导方向”与“活跃方向”之间切换 |
 | `evidence_lines`        | output    | 解释证据行                    |
+
+常见诊断脚本：
+
+- [`check_intraday_sources.py`](/home/yh/.openclaw/workspace/projects/awin/scripts/check_intraday_sources.py)
+  用于确认 QMT / DCF / THS CLI / THS APP 在指定时点是否真的可用，特别是验证 `ths_app_hot_concept_trade` 是否滞后
+- [`raw_market_judgement.py`](/home/yh/.openclaw/workspace/projects/awin/scripts/raw_market_judgement.py)
+  用于不依赖 runtime `market_understanding` 输出，直接基于原始源做一版独立盘面判断
+- [`compare_runtime_vs_raw.py`](/home/yh/.openclaw/workspace/projects/awin/scripts/compare_runtime_vs_raw.py)
+  用于对比 runtime 正式输出与 raw 独立判断，定位差异更偏数据源问题还是方法问题
 
 
 ### 5.5 `opportunity_discovery` and `risk_surveillance`

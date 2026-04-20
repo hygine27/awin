@@ -128,6 +128,90 @@ score_weights:
         self.assertIn("主风格", output.summary_line)
         self.assertTrue(output.evidence_lines)
 
+    def test_compute_market_understanding_uses_active_directions_for_parallel_meta_themes(self) -> None:
+        stock_master = [
+            StockMasterRow(symbol=f"3000{i:02d}.SZ", stock_code=f"3000{i:02d}", stock_name=f"S{i}", industry="软件服务", market="创业板")
+            for i in range(1, 13)
+        ]
+        qmt_rows = [
+            QmtSnapshotRow(
+                symbol=item.symbol,
+                stock_code=item.stock_code,
+                trade_date="2026-04-16",
+                snapshot_time="14:50:00",
+                last_price=10.5,
+                last_close=10.0,
+                open_price=10.1,
+                high_price=10.6,
+                low_price=10.0,
+                volume=100000,
+                amount=1000000,
+            )
+            for item in stock_master
+        ]
+        dcf_rows = [
+            DcfSnapshotRow(
+                symbol=item.symbol,
+                trade_date="2026-04-16",
+                volume_ratio=1.5,
+                turnover_rate=0.03,
+            )
+            for item in stock_master
+        ]
+        ths_rows: list[ThsConceptRow] = []
+        for item in stock_master:
+            ths_rows.extend(
+                [
+                    ThsConceptRow(symbol=item.symbol, stock_code=item.stock_code, concept_name="共封装光学(CPO)", meta_theme="光通信_CPO"),
+                    ThsConceptRow(symbol=item.symbol, stock_code=item.stock_code, concept_name="军工信息化", meta_theme="军工大装备"),
+                    ThsConceptRow(symbol=item.symbol, stock_code=item.stock_code, concept_name="特高压", meta_theme="电网设备"),
+                ]
+            )
+        hot_rows = [
+            ThsHotConceptRow(
+                source_table="stg.ths_cli_hot_concept",
+                trade_date="2026-04-16",
+                batch_ts="2026-04-16 14:50:00",
+                concept_name="共封装光学(CPO)",
+                change_pct=0.021,
+                speed_1min=0.002,
+                main_net_amount=1.2e8,
+                limit_up_count=3,
+                rising_count=20,
+                falling_count=4,
+            ),
+            ThsHotConceptRow(
+                source_table="stg.ths_cli_hot_concept",
+                trade_date="2026-04-16",
+                batch_ts="2026-04-16 14:50:00",
+                concept_name="军工信息化",
+                change_pct=0.022,
+                speed_1min=0.002,
+                main_net_amount=1.25e8,
+                limit_up_count=3,
+                rising_count=21,
+                falling_count=5,
+            ),
+            ThsHotConceptRow(
+                source_table="stg.ths_cli_hot_concept",
+                trade_date="2026-04-16",
+                batch_ts="2026-04-16 14:50:00",
+                concept_name="特高压",
+                change_pct=0.020,
+                speed_1min=0.002,
+                main_net_amount=1.18e8,
+                limit_up_count=3,
+                rising_count=19,
+                falling_count=4,
+            ),
+        ]
+
+        output = compute_market_understanding(stock_master, qmt_rows, dcf_rows, ths_rows, ths_hot_concepts=hot_rows)
+
+        self.assertIn("活跃方向", output.summary_line)
+        self.assertIn(" / ", output.summary_line)
+        self.assertTrue(any("活跃方向" in line for line in output.evidence_lines))
+
     def test_compute_market_understanding_includes_fund_flow_evidence_when_available(self) -> None:
         stock_master = [
             StockMasterRow(symbol=f"3000{i:02d}.SZ", stock_code=f"3000{i:02d}", stock_name=f"S{i}", industry="软件服务", market="创业板")
@@ -172,6 +256,7 @@ score_weights:
 
         joined = "\n".join(output.evidence_lines)
         self.assertIn("主线资金", joined)
+        self.assertIn("150.0万", joined)
         self.assertIn("市场资金", joined)
 
     def test_compute_market_understanding_prefers_actionable_market_tape_regime(self) -> None:

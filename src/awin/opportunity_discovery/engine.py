@@ -199,6 +199,7 @@ def _candidate(
         best_concept=concept_name or fact.best_concept,
         research_hooks=fact.research_hooks[:4],
         metadata={
+            "amount": fact.amount,
             "pct_chg_prev_close": fact.pct_chg_prev_close,
             "range_position": fact.range_position,
             "money_pace_ratio": fact.money_pace_ratio,
@@ -206,6 +207,9 @@ def _candidate(
             "volume_ratio": fact.volume_ratio,
             "turnover_rate": fact.turnover_rate,
             "flow_ratio": fact.flow_ratio,
+            "main_net_inflow": fact.main_net_inflow,
+            "super_net": fact.super_net,
+            "large_net": fact.large_net,
             "amount_rank": fact.amount_rank,
             "float_mkt_cap_rank": fact.float_mkt_cap_rank,
             "ret_3d": fact.ret_3d,
@@ -654,13 +658,13 @@ def compute_opportunity_discovery(
                 streak = int(repeat_context["current_streak"])
                 if capacity_anchor and streak <= 1:
                     reason = (
-                        f"{best_theme or best_concept or '主线'}内容量和成交额持续靠前，"
-                        f"近期已反复进入视野，本轮更适合作为中军锚定"
+                        f"{best_theme or best_concept or '主线'}内容量与成交额持续靠前，"
+                        f"当前日内位置{range_position:.2f}，更适合作为中军锚定"
                     )
                 else:
                     reason = (
                         f"{best_theme or best_concept or '主线'}已连续 {streak} 轮维持强势，"
-                        f"当前没有足够新增变量，更适合作为核心锚定"
+                        f"当前日内位置{range_position:.2f}，更适合作为核心锚定"
                     )
                 core_anchor.append(
                     (
@@ -722,9 +726,10 @@ def compute_opportunity_discovery(
                 metadata["catchup_upgrade_guard_penalty"] = round(catchup_upgrade_guard_penalty, 2)
                 metadata["rank_score"] = round(rank_score, 2)
                 metadata["display_score"] = round(display_score, 2)
+                flow_text = "主力净流入为正" if _safe(fact.main_net_inflow) > 0 else "主力资金未明显转弱"
                 reason = (
                     f"{best_theme or best_concept or '主线'}共振，涨幅{_fmt_pct(fact.pct_chg_prev_close)}，"
-                    f"量价与资金同步改善，适合进入顺风新增"
+                    f"资金节奏{_safe(fact.money_pace_ratio):.2f}x，日内位置{range_position:.2f}，{flow_text}"
                 )
                 new_long.append(
                     (
@@ -864,7 +869,7 @@ def compute_opportunity_discovery(
         ):
             reason = (
                 f"{best_theme or best_concept or '主线'}仍强，但近3/10日相对不算最热，"
-                f"当前量能开始抬升，适合当补涨观察"
+                f"当前资金节奏{money_pace_ratio:.2f}x，近3日{_fmt_pct(fact.ret_3d)} / 10日{_fmt_pct(fact.ret_10d)}"
             )
             catchup.append(
                 (

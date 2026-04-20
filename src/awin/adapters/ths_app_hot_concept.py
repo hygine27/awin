@@ -1,7 +1,12 @@
 """ths_app_hot_concept interface.
 
 Reads the THS app hot-concept snapshot table and adds the app-side concept heat
-ranking overlay used by the market-understanding layer.
+ranking overlay used for deprecated debug / preopen-attention scenarios.
+
+Status:
+- deprecated
+- not used by the production runtime pipeline
+- retained only for manual validation, source comparison, and preopen observation
 """
 
 from __future__ import annotations
@@ -57,9 +62,15 @@ def _to_int(value) -> int | None:
 
 
 class ThsAppHotConceptAdapter(DbBackedAdapter):
-    """Load the latest THS app hot-concept batch before the cutoff."""
+    """Load the latest THS app hot-concept batch before the cutoff.
+
+    Deprecated:
+    This adapter is intentionally kept out of the production scoring flow because
+    the source does not behave as a reliable intraday feed in current validation.
+    """
 
     source_name = "ths_app_hot_concept"
+    lifecycle_status = "deprecated"
 
     def __init__(self, overlay_config_path: Path | None = None) -> None:
         config = get_app_config()
@@ -69,10 +80,22 @@ class ThsAppHotConceptAdapter(DbBackedAdapter):
     def health(self) -> SourceHealth:
         _, error = self._connect_with_error()
         if error is not None:
-            return SourceHealth(source_name=self.source_name, source_status="missing", detail=error)
+            return SourceHealth(
+                source_name=self.source_name,
+                source_status="missing",
+                detail=f"deprecated source; {error}",
+            )
         if not self.overlay_config_path.exists():
-            return SourceHealth(source_name=self.source_name, source_status="missing", detail=f"missing file: {self.overlay_config_path}")
-        return SourceHealth(source_name=self.source_name, source_status="ready")
+            return SourceHealth(
+                source_name=self.source_name,
+                source_status="missing",
+                detail=f"deprecated source; missing file: {self.overlay_config_path}",
+            )
+        return SourceHealth(
+            source_name=self.source_name,
+            source_status="ready",
+            detail="deprecated source; retained for debug / preopen_attention only",
+        )
 
     def build_query(self, request: SnapshotRequest) -> tuple[str, dict[str, str]]:
         cutoff = datetime.fromisoformat(request.analysis_snapshot_ts.replace("Z", "+00:00"))
