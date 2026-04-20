@@ -104,6 +104,17 @@ class SchemaTestCase(unittest.TestCase):
             self.assertIn("market_type_label", style_profile_columns)
             self.assertIn("ownership_style", style_profile_columns)
             self.assertIn("size_bucket_pct", style_profile_columns)
+            self.assertIn("free_float_share", style_profile_columns)
+            self.assertIn("avg_amount_20d", style_profile_columns)
+            self.assertIn("dividend_value_score", style_profile_columns)
+            self.assertIn("quality_growth_score", style_profile_columns)
+            self.assertIn("low_vol_defensive_score", style_profile_columns)
+            self.assertIn("high_beta_attack_score", style_profile_columns)
+            self.assertIn("dividend_style", style_profile_columns)
+            self.assertIn("valuation_style", style_profile_columns)
+            self.assertIn("growth_style", style_profile_columns)
+            self.assertIn("quality_style", style_profile_columns)
+            self.assertIn("volatility_style", style_profile_columns)
             self.assertIn("composite_style_labels_json", style_profile_columns)
 
 

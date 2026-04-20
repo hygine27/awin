@@ -42,6 +42,10 @@ def _clamp01(value: float | None) -> float:
     return max(0.0, min(1.0, float(value)))
 
 
+def _safe(value: float | None, default: float = 0.0) -> float:
+    return default if value is None else float(value)
+
+
 def _score_by_min(value: float, bands: list[dict[str, float]]) -> float:
     for band in bands:
         if value >= float(band["min"]):
@@ -113,6 +117,11 @@ def _build_candidate(
             "ret_10d": fact.ret_10d,
             "ret_20d": fact.ret_20d,
             "amplitude": fact.amplitude,
+            "main_net_amount_5d_sum": fact.main_net_amount_5d_sum,
+            "outflow_streak_days": fact.outflow_streak_days,
+            "flow_acceleration_3d": fact.flow_acceleration_3d,
+            "price_flow_divergence_flag": fact.price_flow_divergence_flag,
+            "high_beta_attack_score": fact.high_beta_attack_score,
             "relative_to_theme": relative_to_theme,
         },
     )
@@ -269,6 +278,12 @@ def compute_risk_surveillance(
             if (main_net_inflow < 0 or large_flow_net < 0)
             else 0.0
         )
+        overheat_tape += (
+            float(overheat_tape_rules["negative_history_flow_bonus"])
+            if (_clamp01(1.0 if _safe(fact.main_net_amount_5d_sum) < 0 else 0.0) > 0 or int(fact.outflow_streak_days or 0) >= 2)
+            else 0.0
+        )
+        overheat_tape += float(overheat_tape_rules["divergence_bonus"]) if fact.price_flow_divergence_flag else 0.0
         overheat_tape = min(float(overheat_tape_rules["cap"]), overheat_tape)
 
         overheat_persistence = 0.0
@@ -276,6 +291,8 @@ def compute_risk_surveillance(
         overheat_persistence += _score_by_min(ret20, overheat_persistence_rules["ret_20d_bands"])
         overheat_persistence += _score_by_min(turnover_rate, overheat_persistence_rules["turnover_bands"])
         overheat_persistence += _score_by_min(amplitude, overheat_persistence_rules["amplitude_bands"])
+        overheat_persistence += _score_by_min(float(fact.outflow_streak_days or 0), overheat_persistence_rules["outflow_streak_bands"])
+        overheat_persistence += _score_by_min(float(fact.high_beta_attack_score or 0.0), overheat_persistence_rules["high_beta_attack_bands"])
 
         calm_reset_gate = overheat_persistence_rules["calm_reset_gate"]
         if (
@@ -304,6 +321,7 @@ def compute_risk_surveillance(
             + float(RISK_WEIGHTS["weakness_flow_score"]) * (1.0 - flow_score)
             + float(RISK_WEIGHTS["weakness_amplitude_rank"]) * fact.amplitude_rank
             + float(RISK_WEIGHTS["weakness_concept_support"]) * min(1.0, concept_support / 3.0)
+            + float(RISK_WEIGHTS["weakness_flow_divergence"]) * (1.0 if fact.price_flow_divergence_flag else 0.0)
         )
 
         if (

@@ -1,0 +1,549 @@
+# 机会发现规则。
+# 负责把股票归类到 core_anchor / new_long / catchup 等多头分层。
+# 这份配置回答的问题是：
+# - 哪些股票是当前主线里的核心锚定
+# - 哪些股票是今天可以新增跟踪的顺风标的
+# - 哪些股票更像补涨观察，而不是主升核心
+#
+# bucket 业务含义：
+# - core_anchor：主线核心锚定，更偏“中军/龙头/反复确认”
+# - new_long：顺风新增，更偏“主线内部新强化、可新进观察”
+# - catchup：补涨观察，更偏“主线还在，但这只票相对没那么热，可能轮到它”
+
+# long_score_caps:
+# - 作用：限制多头综合分各大模块的最高贡献，避免某一维过度主导
+long_score_caps:
+  # alignment:
+  # - 作用：主线一致性模块的最高分
+  alignment: 2.5
+  # dual_support:
+  # - 作用：主题/风格双重支撑模块的最高分
+  dual_support: 2.0
+  # temperature:
+  # - 作用：拥挤度/过热度回撤模块的最高分
+  temperature: 2.0
+  # research:
+  # - 作用：研究覆盖与信息完备度模块的最高分
+  research: 1.5
+  # tape:
+  # - 作用：盘口、节奏、量价配合模块的最高分
+  tape: 2.0
+  # profile:
+  # - 作用：慢变量风格画像与历史资金画像模块的最高分
+  profile: 1.2
+
+# 主线到风格的提示映射。
+# 用途：
+# - 这是“主线 -> 大风格”的提示映射
+# - 只用于候选打分中的辅助判断
+# - 不是权威分类字典，也不是最终输出给业务的唯一分类来源
+meta_to_style_hint:
+  AI算力: 科技成长
+  光通信_CPO: 科技成长
+  半导体: 科技成长
+  机器人: 科技成长
+  电网储能: 顺周期
+  商业航天低空: 科技成长
+
+# 概念优先级。
+# strongest:
+# - 作用：对当前最强概念列表做优先级打分
+# acceleration:
+# - 作用：对当前加速概念列表做优先级打分
+concept_priority:
+  strongest:
+    # start: 第一名起始分
+    start: 1.0
+    # step: 每往后一名衰减多少
+    step: 0.12
+    # floor: 最低保留分
+    floor: 0.2
+  acceleration:
+    start: 0.96
+    step: 0.1
+    floor: 0.28
+
+# 主题上下文解析。
+# 作用：
+# - 解决“同一只股票挂了多个概念时，应该更相信哪一个”
+# - 以及“某概念没有热榜分时，如何使用退化分数”
+theme_context_rules:
+  # overlay_fallback_multiplier:
+  # - 作用：概念没有显式 overlay 分时信号时，使用概念优先级打折回退
+  overlay_fallback_multiplier: 0.75
+  # theme_primary_bonus:
+  # - 作用：若概念属于该元主题的主概念池，则加分
+  theme_primary_bonus: 0.15
+  # theme_primary_penalty:
+  # - 作用：若该股明明属于某元主题，但当前概念不在主概念池，则扣分
+  theme_primary_penalty: 0.15
+  # strongest_concept_bonus:
+  # - 作用：概念本身位于 strongest_concepts 时的额外加分
+  strongest_concept_bonus: 0.04
+  # acceleration_concept_bonus:
+  # - 作用：概念本身位于 acceleration_concepts 时的额外加分
+  acceleration_concept_bonus: 0.03
+
+# 新意分，回答“这只票和上一轮相比有没有新增信息”。
+novelty_rules:
+  # score_delta_bands:
+  # - 作用：当前分数较上一轮提高多少时，给予多少“新增变量”加分
+  score_delta_bands:
+    - min: 0.8
+      score: 0.45
+    - min: 0.4
+      score: 0.25
+  # meta_theme_switch_bonus:
+  # - 作用：主元主题发生切换时的加分，代表叙事切换
+  meta_theme_switch_bonus: 0.3
+  # concept_switch_bonus:
+  # - 作用：最佳概念发生切换时的加分
+  concept_switch_bonus: 0.2
+  # pct_min:
+  # - 作用：只有涨幅达到该阈值，才认为强度变化值得记入新意分
+  # - 单位：相对昨收涨幅
+  pct_min: 0.06
+  # range_position_min:
+  # - 作用：日内位置至少达到该阈值，才认为不是低位弱反抽
+  # - 单位：0~1 日内振幅位置
+  range_position_min: 0.7
+  # pct_shape_bonus:
+  # - 作用：同时满足 pct_min 和 range_position_min 时的额外加分
+  pct_shape_bonus: 0.15
+  flow_tail_weights:
+    # main_flow_rank:
+    # - 作用：主力资金排名在 flow_tail 中的权重
+    main_flow_rank: 0.65
+    # super_flow_rank:
+    # - 作用：超大单资金排名在 flow_tail 中的权重
+    super_flow_rank: 0.35
+  # flow_tail_min:
+  # - 作用：flow_tail 至少达到该阈值才算资金尾部强化
+  flow_tail_min: 0.75
+  # flow_tail_bonus:
+  # - 作用：资金尾部强化时的额外加分
+  flow_tail_bonus: 0.1
+  # catchup_origin_bonus:
+  # - 作用：若上一轮属于 catchup，本轮获得额外“升级新意”
+  catchup_origin_bonus: 0.15
+  # max_score:
+  # - 作用：新意分上限
+  max_score: 1.0
+
+# 多头综合分拆解。
+# 这一层把 long_score 拆成 5 大模块：
+# - alignment：与主线是否对齐
+# - dual_support：有没有多重支撑
+# - temperature：是否过热
+# - research：研究覆盖够不够
+# - tape：盘口和量价节奏是否健康
+# - profile：慢变量风格画像和历史资金连续性是否支持当前机会
+long_score_rules:
+  alignment:
+    # theme_rank_scores:
+    # - 作用：元主题排名越靠前，alignment 起始分越高
+    theme_rank_scores:
+      "1": 1.6
+      "2": 1.3
+      "3": 1.0
+      default: 0.6
+    # concept_score_bands:
+    # - 作用：最佳概念本身强度越高，额外得分越高
+    concept_score_bands:
+      - min: 0.8
+        score: 0.6
+      - min: 0.6
+        score: 0.4
+      - min: 0.0
+        score: 0.2
+    # theme_confirm_bonus:
+    # - 作用：若股票自身元主题和识别出的最佳元主题一致，则加分
+    theme_confirm_bonus: 0.3
+
+  dual_support:
+    # concept_support_bands:
+    # - 作用：股票挂靠概念数量处于不同区间时，给予不同支撑分
+    concept_support_bands:
+      - min: 8.0
+        score: 0.8
+      - min: 2.0
+        max: 7.0
+        score: 1.2
+      - min: 0.0
+        score: 0.5
+    # theme_overlap_bonus:
+    # - 作用：股票存在元主题重合时的加分
+    theme_overlap_bonus: 0.4
+    # style_hint_bonus:
+    # - 作用：主线提示风格与股票实际风格标签一致时的加分
+    style_hint_bonus: 0.4
+
+  temperature:
+    # base:
+    # - 作用：温度模块初始分
+    base: 2.0
+    # min:
+    # - 作用：温度模块最低保留分，避免被扣成负数
+    min: 0.2
+    # penalties:
+    # - 作用：超过对应阈值时扣分，反映过热、拥挤或短线透支
+    penalties:
+      - field: pct_chg_prev_close
+        operator: ">"
+        threshold: 0.06
+        penalty: 0.4
+      - field: pct_chg_prev_close
+        operator: ">"
+        threshold: 0.075
+        penalty: 0.5
+      - field: ret_3d
+        operator: ">"
+        threshold: 0.1
+        penalty: 0.4
+      - field: ret_5d
+        operator: ">"
+        threshold: 0.15
+        penalty: 0.4
+      - field: ret_10d
+        operator: ">"
+        threshold: 0.22
+        penalty: 0.3
+      - field: amplitude
+        operator: ">"
+        threshold: 0.12
+        penalty: 0.3
+      - field: turnover_rate
+        operator: ">"
+        threshold: 0.18
+        penalty: 0.2
+
+  research:
+    # onepage_bonus:
+    # - 作用：有个股一页纸覆盖时加分
+    onepage_bonus: 0.7
+    # company_card_bonus:
+    # - 作用：有公司卡覆盖时加分
+    company_card_bonus: 0.55
+    # coverage_cap:
+    # - 作用：研究覆盖率贡献上限
+    coverage_cap: 0.55
+    # coverage_multiplier:
+    # - 作用：研究覆盖率换算到得分时的乘数
+    coverage_multiplier: 0.7
+    # intel_mentions_cap:
+    # - 作用：近 90 天情报提及贡献上限
+    intel_mentions_cap: 0.5
+    # intel_mentions_divisor:
+    # - 作用：情报提及次数换算为得分时的缩放因子
+    intel_mentions_divisor: 120.0
+
+  tape:
+    # pace_bands:
+    # - 作用：资金节奏越快，盘口节奏分越高
+    pace_bands:
+      - min: 1.8
+        score: 0.7
+      - min: 1.2
+        score: 0.5
+      - min: 0.0
+        score: 0.3
+    # range_position_bands:
+    # - 作用：日内位置越高，说明当前更强势
+    range_position_bands:
+      - min: 0.6
+        score: 0.6
+      - min: 0.4
+        score: 0.4
+      - min: 0.0
+        score: 0.2
+    # open_ret_bands:
+    # - 作用：开盘到当前的路径是否健康，避免高开低走或弱修复
+    open_ret_bands:
+      - min: -0.005
+        max: 0.06
+        score: 0.4
+      - min: -0.02
+        score: 0.2
+      - min: -999.0
+        score: 0.0
+    # bid_ask_imbalance_bands:
+    # - 作用：买卖盘不平衡程度对应的节奏分
+    bid_ask_imbalance_bands:
+      - min: -0.2
+        score: 0.3
+      - min: -999.0
+        score: 0.1
+    # main_flow_positive_bonus:
+    # - 作用：主力净流入为正时的加分
+    main_flow_positive_bonus: 0.35
+    # large_flow_positive_bonus:
+    # - 作用：大单/超大单净流入为正时的加分
+    large_flow_positive_bonus: 0.25
+    # volume_ratio_min:
+    # - 作用：量比达到该值时，说明量能至少不弱
+    volume_ratio_min: 1.5
+    # volume_ratio_bonus:
+    # - 作用：量比达到门槛后的额外加分
+    volume_ratio_bonus: 0.2
+
+  profile:
+    # growth_quality_weight:
+    # - 作用：科技成长类机会里，高质量成长画像的权重
+    growth_quality_weight: 0.45
+    # attack_weight:
+    # - 作用：科技成长/高弹性机会里，高弹性画像的权重
+    attack_weight: 0.35
+    # dividend_weight:
+    # - 作用：红利/防御类机会里，红利价值画像的权重
+    dividend_weight: 0.4
+    # defensive_weight:
+    # - 作用：防御类机会里，低波防御画像的权重
+    defensive_weight: 0.3
+    # inflow_streak_bonus:
+    # - 作用：历史资金连续净流入达到门槛后的奖励
+    inflow_streak_bonus: 0.22
+    # inflow_streak_min:
+    # - 作用：触发连续净流入奖励的最小天数
+    inflow_streak_min: 2
+    # net_5d_positive_bonus:
+    # - 作用：近5日主净额为正时的奖励
+    net_5d_positive_bonus: 0.18
+    # acceleration_positive_bonus:
+    # - 作用：近3日资金加速度为正时的奖励
+    acceleration_positive_bonus: 0.12
+    # divergence_penalty:
+    # - 作用：价格与历史资金方向背离时的惩罚
+    divergence_penalty: 0.22
+    # capacity_anchor_bonus:
+    # - 作用：机构容量画像更适合作为 core/new_long 的中军锚定时的奖励
+    capacity_anchor_bonus: 0.12
+
+# 各 bucket 的准入门槛。
+# 这组参数定义“什么样的股票有资格进入某一类观察名单”。
+bucket_rules:
+  base_focus:
+    # pct_min / pct_max:
+    # - 作用：限定候选股相对昨收的涨幅范围，避免过弱或过热
+    pct_min: -0.02
+    pct_max: 0.1
+    # ret_3d_max / ret_5d_max / ret_10d_max:
+    # - 作用：限定中短期累计涨幅，避免已经透支太多
+    ret_3d_max: 0.15
+    ret_5d_max: 0.2
+    ret_10d_max: 0.28
+    # range_position_min:
+    # - 作用：要求当前仍处于相对强势区间
+    range_position_min: 0.35
+    # money_pace_ratio_min:
+    # - 作用：要求资金节奏至少不弱
+    money_pace_ratio_min: 0.9
+    # open_ret_min:
+    # - 作用：避免明显高开低走或全天弱势
+    open_ret_min: -0.02
+    # amount_min:
+    # - 作用：要求至少有一定成交额，避免纯噪音小票
+    # - 单位：元
+    amount_min: 300000000.0
+    # long_score_min:
+    # - 作用：新候选进入多头观察层的最低分
+    long_score_min: 8.2
+    # repeat_long_score_min:
+    # - 作用：若是上一轮已入选的重复名字，允许适度放宽的最低分
+    repeat_long_score_min: 6.8
+
+  capacity_anchor:
+    # 作用：判断一只重复出现的股票是否已经达到“容量锚定”标准
+    amount_min: 5000000000.0
+    pct_min: 0.015
+    pct_max: 0.06
+    range_position_min: 0.45
+    ret_5d_max: 0.12
+    rank_score_min: 9.0
+
+  carried_core_anchor:
+    # long_score_min:
+    # - 作用：上一轮已经是 core_anchor 时，本轮维持 core_anchor 的最低分
+    long_score_min: 8.6
+
+  continuity_upgrade:
+    # 作用：判断 new_long 是否有资格升级成更强主升结构
+    long_score_min: 9.4
+    amount_min: 3000000000.0
+    main_net_inflow_min: 100000000.0
+    range_position_min: 0.5
+    ret_10d_max: 0.12
+
+  catchup_upgrade_guard:
+    # 作用：限制 catchup 在形态不够好时被过度升级
+    range_position_min: 0.45
+    ret_10d_max: 0.16
+
+  catchup_candidate:
+    # 作用：定义补涨观察层的基本入选门槛
+    pct_min: 0.01
+    pct_max: 0.07
+    ret_3d_max: 0.1
+    ret_5d_max: 0.16
+    range_position_min: 0.35
+    money_pace_ratio_min: 1.0
+    volume_ratio_min: 1.2
+    catchup_score_min: 2.4
+
+# 重复出现相关规则。
+# 这组参数控制：
+# - 老名字重复出现时，如何扣分
+# - 什么情况下重复出现可以被视为“确认”，而不是“没有新东西”
+repeat_rules:
+  # recent_round_gap_limit:
+  # - 作用：判定“最近重复出现”时允许的最大轮次间隔
+  recent_round_gap_limit: 2
+  # anchor_min_consecutive:
+  # - 作用：要成为 anchor_candidate 至少需要连续出现多少轮
+  anchor_min_consecutive: 3
+  # anchor_min_appearances:
+  # - 作用：要成为 anchor_candidate 至少累计出现多少轮
+  anchor_min_appearances: 4
+  # anchor_min_score:
+  # - 作用：要成为 anchor_candidate 的最低 long_score
+  anchor_min_score: 9.0
+  # new_name_bonus:
+  # - 作用：新上榜名字的额外奖励
+  new_name_bonus: 0.6
+  # repeat_penalty_base:
+  # - 作用：重复但没有新增变量时的基础扣分
+  repeat_penalty_base: 0.8
+  # repeat_penalty_step:
+  # - 作用：连续重复越久，额外每档增加的扣分
+  repeat_penalty_step: 0.4
+  # max_repeat_penalty:
+  # - 作用：重复扣分上限
+  max_repeat_penalty: 2.4
+  # evidence_bonus:
+  # - 作用：重复出现但具备足够证据时给予的确认奖励
+  evidence_bonus: 0.4
+  # prominent_repeat_novelty:
+  # - 作用：允许“重要重复”不被处罚所需的新意分门槛
+  prominent_repeat_novelty: 0.35
+  # high_quality_repeat_min_long_score:
+  # - 作用：高质量重复至少需要达到的 long_score
+  high_quality_repeat_min_long_score: 8.8
+  # high_quality_repeat_min_novelty:
+  # - 作用：高质量重复至少需要达到的新意分
+  high_quality_repeat_min_novelty: 0.15
+  # high_quality_repeat_bonus:
+  # - 作用：高质量重复获得的额外奖励
+  high_quality_repeat_bonus: 0.6
+
+# 补涨分和补涨筛选规则。
+# 这组参数定义：
+# - 如何给 catchup 打原始分
+# - 什么情况下要惩罚补涨
+# - 什么情况下允许新发现补涨名额
+catchup_rules:
+  # trend_backbone_continuity_bonus:
+  # - 作用：主线骨干延续时的额外奖励
+  trend_backbone_continuity_bonus: 2.0
+  # deep_pullback_catchup_penalty:
+  # - 作用：深跌后反抽型补涨的惩罚
+  deep_pullback_catchup_penalty: 0.6
+  # mainline_primary_concept_bonus:
+  # - 作用：若补涨票属于主线最核心概念，则加分
+  mainline_primary_concept_bonus: 0.15
+  # catchup_upgrade_guard_penalty:
+  # - 作用：形态不佳时，防止 catchup 被误升级
+  catchup_upgrade_guard_penalty: 0.25
+  # negative_main_flow_catchup_penalty:
+  # - 作用：主力净流入为负时的惩罚
+  negative_main_flow_catchup_penalty: 0.35
+  # negative_ret3_catchup_penalty:
+  # - 作用：近 3 日收益为负时的惩罚
+  negative_ret3_catchup_penalty: 0.6
+  # fresh_catchup_discovery_bonus:
+  # - 作用：新发现但盘口明显转强的补涨奖励
+  fresh_catchup_discovery_bonus: 0.45
+  # weak_repeat_new_long_catchup_penalty:
+  # - 作用：从弱 new_long 回落到 catchup 时的惩罚
+  weak_repeat_new_long_catchup_penalty: 0.4
+
+  reset_score_weights:
+    # ret_3d_rank / ret_10d_rank:
+    # - 作用：补涨“相对没涨过头”的衡量权重
+    ret_3d_rank: 0.55
+    ret_10d_rank: 0.45
+
+  # amount_norm_divisor:
+  # - 作用：成交额归一化时的缩放分母
+  # - 单位：元
+  amount_norm_divisor: 8000000000.0
+  # flow_norm_divisor:
+  # - 作用：主力净流入归一化时的缩放分母
+  # - 单位：元
+  flow_norm_divisor: 200000000.0
+
+  focus_bonus:
+    # best_concept:
+    # - 作用：若最佳概念正好是当前补涨焦点概念，给予更高加分
+    best_concept: 0.3
+    # support_ge_2:
+    # - 作用：若至少有两个概念命中当前补涨焦点，给予次一级加分
+    support_ge_2: 0.15
+
+  # best_concept_miss_penalty:
+  # - 作用：若最佳概念不在当前补涨焦点里，则惩罚
+  best_concept_miss_penalty: 0.25
+
+  pace_penalty_bands:
+    # max:
+    # - 作用：资金节奏低于该阈值时触发惩罚
+    # penalty:
+    # - 作用：对应惩罚分
+    - max: 0.75
+      penalty: 0.6
+    - max: 0.9
+      penalty: 0.35
+
+  deep_pullback_gate:
+    # ret_5d_min / ret_10d_min:
+    # - 作用：若中短期跌幅过深，则视为深跌反抽型补涨
+    ret_5d_min: -0.12
+    ret_10d_min: -0.15
+
+  duplicate_new_long_penalty:
+    # 作用：避免把已经太高位、又成交不够的 new_long 再重复塞进 catchup
+    range_position_min: 0.8
+    amount_max: 2500000000.0
+    penalty: 0.4
+
+  weak_repeat_new_long_gate:
+    # 作用：识别“虽然在 new_long，但其实偏弱”的重复名字
+    amount_max: 3000000000.0
+    range_position_min: 0.5
+    ret_3d_max: 0.02
+
+  fresh_discovery_gate:
+    # 作用：定义“新发现补涨”成立所需的盘口与主题条件
+    money_pace_ratio_min: 1.5
+    ret_10d_max: 0.08
+    concept_name: AI智能体
+
+  score_formula:
+    # 作用：定义 catchup 原始分由哪些模块线性叠加而成
+    money_pace_cap: 4.0
+    money_pace_weight: 0.28
+    range_position_weight: 1.2
+    company_card_quality_weight: 1.1
+    amount_norm_weight: 0.9
+    flow_norm_weight: 0.8
+    ret_3d_anchor: 0.08
+    ret_3d_clip_max: 0.08
+    ret_3d_weight: 5.0
+    # tracking_block_penalty:
+    # - 作用：若公司卡明确不建议跟踪，则直接扣分
+    tracking_block_penalty: 0.35
+
+  display_score_formula:
+    # 作用：将 catchup 原始分映射到前台展示分
+    multiplier: 1.35
+    intercept: 4.2
+    min: 1.0
+    max: 10.0

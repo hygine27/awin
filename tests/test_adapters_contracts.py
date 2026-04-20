@@ -16,10 +16,17 @@ from awin.adapters import (
     DcfHqZjSnapshotAdapter,
     QmtAshareSnapshot5mAdapter,
     QmtBar1dAdapter,
+    QmtBar1dMetricsAdapter,
     ResearchCoverageAdapter,
     SnapshotRequest,
     StockMasterAdapter,
     ThsConceptAdapter,
+    TsMoneyflowCntThsAdapter,
+    TsMoneyflowDcAdapter,
+    TsMoneyflowIndThsAdapter,
+    TsMoneyflowMktDcAdapter,
+    TsMoneyflowThsAdapter,
+    TsStyleDailyMetricsAdapter,
 )
 
 
@@ -169,6 +176,42 @@ company_role: 龙头
         self.assertEqual(dcf_batch_params["trade_date"], "2026-04-16")
         self.assertEqual(dcf_baseline_params["trade_date"], "2026-04-16")
 
+        qmt_metric_sql, qmt_metric_params = QmtBar1dMetricsAdapter().build_query(["000001.SZ"], "2026-04-16", "2026-04-30")
+        self.assertIn("stg.qmt_bar_1d", qmt_metric_sql)
+        self.assertIn("avg(amount)", qmt_metric_sql)
+        self.assertEqual(qmt_metric_params["symbols"], ["000001.SZ"])
+        self.assertEqual(qmt_metric_params["start_date"], "2026-04-16")
+        self.assertEqual(qmt_metric_params["trade_date"], "2026-04-30")
+
+    def test_ts_moneyflow_adapters_expose_query_contracts(self) -> None:
+        ths_sql, ths_params = TsMoneyflowThsAdapter().build_query("2026-04-16")
+        dc_sql, dc_params = TsMoneyflowDcAdapter().build_query("2026-04-16")
+        cnt_sql, cnt_params = TsMoneyflowCntThsAdapter().build_query("2026-04-16")
+        ind_sql, ind_params = TsMoneyflowIndThsAdapter().build_query("2026-04-16")
+        mkt_sql, mkt_params = TsMoneyflowMktDcAdapter().build_query("2026-04-16")
+
+        self.assertIn("stg.ts_moneyflow_ths", ths_sql)
+        self.assertIn("trade_date <", ths_sql)
+        self.assertEqual(ths_params["trade_date"], "2026-04-16")
+        self.assertIn("stg.ts_moneyflow_dc", dc_sql)
+        self.assertIn("latest_trade_date", dc_sql)
+        self.assertEqual(dc_params["trade_date"], "2026-04-16")
+        self.assertIn("stg.ts_moneyflow_cnt_ths", cnt_sql)
+        self.assertEqual(cnt_params["trade_date"], "2026-04-16")
+        self.assertIn("stg.ts_moneyflow_ind_ths", ind_sql)
+        self.assertEqual(ind_params["trade_date"], "2026-04-16")
+        self.assertIn("stg.ts_moneyflow_mkt_dc", mkt_sql)
+        self.assertEqual(mkt_params["trade_date"], "2026-04-16")
+
+    def test_ts_style_daily_metrics_adapter_exposes_query_contracts(self) -> None:
+        sql, params = TsStyleDailyMetricsAdapter().build_query("2026-04-16")
+
+        self.assertIn("stg.ts_daily", sql)
+        self.assertIn("stg.ts_adj_factor", sql)
+        self.assertIn("stddev_pop", sql)
+        self.assertIn("max_drawdown_20d", sql)
+        self.assertEqual(params["trade_date"], "2026-04-16")
+
     def test_db_adapters_gracefully_degrade_when_query_unavailable(self) -> None:
         request = SnapshotRequest(
             trade_date="2026-04-16",
@@ -224,7 +267,7 @@ company_role: 龙头
                     [{"baseline_rows": 5200}],
                     [
                         {
-                            "symbol": "000001",
+                            "code": "000001",
                             "trade_date": "2026-04-16",
                             "vendor_batch_ts": "2026-04-16T10:30:00+00:00",
                             "turnover_rate": "0.03",
@@ -236,6 +279,11 @@ company_role: 龙头
                             "ret_5d": None,
                             "ret_10d": "0.03",
                             "ret_20d": "0.05",
+                        }
+                    ],
+                    [
+                        {
+                            "code": "000001",
                             "main_net_inflow": "100万",
                             "super_net": "50万",
                             "large_net": "20万",
@@ -268,7 +316,7 @@ company_role: 龙头
                     [{"baseline_rows": 5200}],
                     [
                         {
-                            "symbol": "000001",
+                            "code": "000001",
                             "trade_date": "2026-04-16",
                             "vendor_batch_ts": "2026-04-16T10:30:00+00:00",
                             "turnover_rate": "3.25",
@@ -280,6 +328,11 @@ company_role: 龙头
                             "ret_5d": None,
                             "ret_10d": "-8.15",
                             "ret_20d": "12.30",
+                        }
+                    ],
+                    [
+                        {
+                            "code": "000001",
                             "main_net_inflow": "100万",
                             "super_net": "50万",
                             "large_net": "20万",

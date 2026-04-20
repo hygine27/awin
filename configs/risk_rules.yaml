@@ -1,0 +1,353 @@
+# 风险监控规则。
+# 负责识别 overheat / warning / weak。
+# 这份配置回答的问题是：
+# - 哪些股票在热门主线里已经明显过热
+# - 哪些股票在主线内部开始掉队，需要 warning
+# - 哪些股票已经进入更明确的弱势回避区
+#
+# 三类含义：
+# - overheat：主线里涨太快、拥挤太高，更适合做风险管理
+# - warning：主线内部开始分化，承接转弱，需要降级观察
+# - weak：价格和资金同步转弱，接近明确回避区
+
+# theme_priority:
+# - 作用：根据当前市场最强元主题顺序，给不同主题分配基础优先级
+theme_priority:
+  # start:
+  # - 作用：第一强主题的起始优先级
+  start: 1.0
+  # step:
+  # - 作用：主题排名每下降一档，优先级衰减多少
+  step: 0.15
+  # floor:
+  # - 作用：优先级最低保留值
+  floor: 0.25
+
+# thresholds:
+# - 作用：定义风险筛选过程中的全局阈值
+thresholds:
+  # risk_limit:
+  # - 作用：每轮最多输出多少只风险股
+  risk_limit: 5
+  # overheat_intraday_threshold:
+  # - 作用：默认市场下，判定“日内已明显偏热”的涨幅门槛
+  # - 单位：相对昨收涨幅
+  overheat_intraday_threshold: 0.1
+  # overheat_relative_threshold:
+  # - 作用：相对主题平均涨幅超出多少，才算“明显跑赢主题”
+  overheat_relative_threshold: 0.05
+  # weak_intraday_threshold:
+  # - 作用：warning 判定里的默认日内弱势涨跌幅门槛
+  weak_intraday_threshold: -0.03
+  # weak_relative_threshold:
+  # - 作用：warning 判定里相对主题掉队的门槛
+  weak_relative_threshold: -0.03
+  # weak_from_open_threshold:
+  # - 作用：从开盘到当前的弱势路径门槛
+  weak_from_open_threshold: -0.02
+  # trend_expansion_overheat_intraday_threshold:
+  # - 作用：强势扩散市下，允许更早识别过热，因此门槛更低
+  trend_expansion_overheat_intraday_threshold: 0.08
+  # trend_expansion_overheat_relative_threshold:
+  # - 作用：强势扩散市下，相对主题偏离的过热门槛
+  trend_expansion_overheat_relative_threshold: 0.04
+  # weak_market_intraday_threshold:
+  # - 作用：弱市里，warning 判定的日内弱势门槛
+  weak_market_intraday_threshold: -0.02
+  # weak_market_relative_threshold:
+  # - 作用：弱市里，相对主题掉队门槛
+  weak_market_relative_threshold: -0.02
+  # overheat_score_gate:
+  # - 作用：最终进入 overheat 名单所需的最低综合分
+  overheat_score_gate: 0.52
+  # warning_score_gate:
+  # - 作用：最终进入 warning 名单所需的最低综合分
+  warning_score_gate: 0.62
+  # weak_score_gate:
+  # - 作用：最终进入 weak 名单所需的最低综合分
+  weak_score_gate: 0.64
+
+# weights:
+# - 作用：定义弱势分里各维度的权重
+weights:
+  # flow_score_main:
+  # - 作用：主力资金排名在 flow_score 中的权重
+  flow_score_main: 0.6
+  # flow_score_super:
+  # - 作用：超大单资金排名在 flow_score 中的权重
+  flow_score_super: 0.25
+  # flow_score_large:
+  # - 作用：大单资金排名在 flow_score 中的权重
+  flow_score_large: 0.15
+  # weakness_theme:
+  # - 作用：主题强度对 weakness_score 的影响权重
+  weakness_theme: 0.26
+  # weakness_pct_rank:
+  # - 作用：涨幅排名掉队对 weakness_score 的影响权重
+  weakness_pct_rank: 0.22
+  # weakness_range_position:
+  # - 作用：日内位置偏低对 weakness_score 的影响权重
+  weakness_range_position: 0.18
+  # weakness_flow_score:
+  # - 作用：资金承接偏弱对 weakness_score 的影响权重
+  weakness_flow_score: 0.16
+  # weakness_amplitude_rank:
+  # - 作用：振幅特征对 weakness_score 的影响权重
+  weakness_amplitude_rank: 0.1
+  # weakness_concept_support:
+  # - 作用：概念/主题支撑对 weakness_score 的影响权重
+  weakness_concept_support: 0.08
+  # weakness_flow_divergence:
+  # - 作用：价格与历史资金背离对 weakness_score 的影响权重
+  weakness_flow_divergence: 0.1
+
+# quota:
+# - 作用：控制 overheat 和 weak 在最终风险列表中的名额分配
+quota:
+  # trend_expansion_overheat_quota:
+  # - 作用：强势扩散市下，最多允许多少个 overheat 占位
+  trend_expansion_overheat_quota: 4
+  # default_overheat_quota_floor:
+  # - 作用：非强势扩散市下，overheat 至少保留多少个名额
+  default_overheat_quota_floor: 3
+
+# 过热 / warning / weak 的评分与门槛。
+# 注意：
+# - 名称虽然叫 overheat_rules
+# - 但当前实际承载了 overheat / warning / weak 三类风险逻辑的详细参数
+# - 后续可以视需要再拆成更清晰的多层结构
+overheat_rules:
+  regime:
+    # theme_score_bands:
+    # - 作用：主题越强，个股过热识别的基础分越高
+    theme_score_bands:
+      - min: 0.85
+        score: 1.5
+      - min: 0.7
+        score: 1.1
+      - min: 0.0
+        score: 0.7
+    # concept_support_bands:
+    # - 作用：概念支撑越多，过热基础分越高
+    concept_support_bands:
+      - min: 2.0
+        score: 0.4
+      - min: 0.0
+        score: 0.2
+    # cap:
+    # - 作用：regime 模块最高分
+    cap: 2.5
+
+  stretch:
+    # pct_bands:
+    # - 作用：日内涨幅越大，stretch 分越高
+    pct_bands:
+      - min: 0.15
+        score: 1.3
+      - min: 0.1
+        score: 1.0
+      - min: 0.0
+        score: 0.6
+    # ret_3d_bonus / ret_5d_bonus / ret_10d_bonus:
+    # - 作用：中短期累计涨幅达到阈值时，额外增加 stretch 分
+    ret_3d_bonus:
+      threshold: 0.12
+      score: 0.5
+    ret_5d_bonus:
+      threshold: 0.18
+      score: 0.4
+    ret_10d_bonus:
+      threshold: 0.28
+      score: 0.3
+    # ret_20d_bands:
+    # - 作用：更长周期累计涨幅的分段加分
+    ret_20d_bands:
+      - min: 0.5
+        score: 0.6
+      - min: 0.4
+        score: 0.4
+      - min: 0.25
+        score: 0.2
+    # turnover_bonus:
+    # - 作用：换手达到门槛时增加 stretch 分
+    turnover_bonus:
+      threshold: 0.2
+      score: 0.3
+    # amplitude_bonus:
+    # - 作用：振幅达到门槛时增加 stretch 分
+    amplitude_bonus:
+      threshold: 0.12
+      score: 0.2
+    # cap:
+    # - 作用：stretch 模块最高分
+    cap: 2.5
+
+  relative:
+    # relative_to_theme_bands:
+    # - 作用：个股相对主题平均表现越超前，relative 分越高
+    relative_to_theme_bands:
+      - min: 0.08
+        score: 1.0
+      - min: 0.0
+        score: 0.7
+      - min: -999.0
+        score: 0.4
+    # concept_support_bands:
+    # - 作用：概念支撑越多，相对过热更可信
+    concept_support_bands:
+      - min: 4.0
+        score: 0.5
+      - min: 1.0
+        score: 0.2
+    cap: 1.5
+
+  research:
+    # onepage_present / onepage_absent:
+    # - 作用：是否有一页纸覆盖，对研究完备度进行加分
+    onepage_present: 0.55
+    onepage_absent: 0.2
+    # company_card_present / company_card_absent:
+    # - 作用：是否有公司卡覆盖，对研究完备度进行加分
+    company_card_present: 0.45
+    company_card_absent: 0.1
+    # coverage_cap:
+    # - 作用：研究覆盖率贡献上限
+    coverage_cap: 0.55
+    # coverage_multiplier:
+    # - 作用：研究覆盖率换算到得分时的乘数
+    coverage_multiplier: 0.65
+    # intel_mentions_cap:
+    # - 作用：市场情报提及次数贡献上限
+    intel_mentions_cap: 0.7
+    # intel_mentions_divisor:
+    # - 作用：情报提及次数换算得分的缩放因子
+    intel_mentions_divisor: 180.0
+    # cap:
+    # - 作用：research 模块最高分
+    cap: 1.5
+
+  tape:
+    # extension_gate:
+    # - 作用：识别“全天几乎沿高位拉升”的强过热路径
+    extension_gate:
+      pct_vs_open_abs_max: 0.01
+      range_position_min: 0.85
+      score: 0.9
+    # open_lag_ratio_max:
+    # - 作用：若从开盘到当前的涨幅落后于总涨幅过多，说明有尾盘拉抬特征
+    open_lag_ratio_max: 0.7
+    # open_lag_score:
+    # - 作用：出现尾盘拉抬特征时的加分
+    open_lag_score: 0.6
+    # fallback_score:
+    # - 作用：不满足前两种路径时的基础分
+    fallback_score: 0.4
+    # bid_ask_imbalance_bands:
+    # - 作用：卖压越重，越符合过热后承接恶化特征
+    bid_ask_imbalance_bands:
+      - max: -0.3
+        score: 0.6
+      - max: 0.1
+        score: 0.4
+      - max: 999.0
+        score: 0.2
+    # money_pace_bands:
+    # - 作用：资金节奏越快，短线拥挤度越高
+    money_pace_bands:
+      - min: 3.0
+        score: 0.5
+      - min: 1.5
+        score: 0.3
+      - min: 0.0
+        score: 0.1
+    # negative_flow_bonus:
+    # - 作用：主力或大单净流出时额外加分，表示过热后承接恶化
+    negative_flow_bonus: 0.3
+    # negative_history_flow_bonus:
+    # - 作用：近5日主净额为负或历史资金连续流出时的额外加分
+    negative_history_flow_bonus: 0.25
+    # divergence_bonus:
+    # - 作用：价格强而历史资金背离时的额外加分
+    divergence_bonus: 0.25
+    # cap:
+    # - 作用：tape 模块最高分
+    cap: 2.0
+
+  persistence:
+    # ret_20d_bands:
+    # - 作用：长周期累计涨幅越高，说明过热越可能具有持续性
+    ret_20d_bands:
+      - min: 0.5
+        score: 0.18
+      - min: 0.4
+        score: 0.12
+      - min: 0.3
+        score: 0.08
+    # turnover_bands:
+    # - 作用：换手越高，拥挤持续性越强
+    turnover_bands:
+      - min: 0.2
+        score: 0.12
+      - min: 0.12
+        score: 0.06
+    # amplitude_bands:
+    # - 作用：振幅越高，短线过热结构越明显
+    amplitude_bands:
+      - min: 0.14
+        score: 0.08
+      - min: 0.1
+        score: 0.04
+    # outflow_streak_bands:
+    # - 作用：历史资金连续净流出越久，风险持续性越强
+    outflow_streak_bands:
+      - min: 3.0
+        score: 0.16
+      - min: 2.0
+        score: 0.08
+    # high_beta_attack_bands:
+    # - 作用：高弹性画像越强，过热持续性的风险越高
+    high_beta_attack_bands:
+      - min: 0.75
+        score: 0.12
+      - min: 0.55
+        score: 0.06
+    # calm_reset_gate:
+    # - 作用：若长周期不算高、换手不高、振幅不大，则回退部分过热分
+    calm_reset_gate:
+      ret_20d_max: 0.3
+      turnover_max: 0.12
+      amplitude_max: 0.12
+      penalty: 0.12
+    # concept_adjustments:
+    # - 作用：对特定概念做额外修正
+    # - 当前示例：AIGC 题材较宽、纯度较弱，因此给了额外回退
+    concept_adjustments:
+      - concept_name: AIGC概念
+        concept_support_max: 1
+        penalty: 0.14
+      - concept_name: AIGC概念
+        ret_20d_max: 0.2
+        penalty: 0.12
+
+  entry_gates:
+    # theme_score_min:
+    # - 作用：只有属于足够强主题的股票，才进入风险结构判断
+    theme_score_min: 0.55
+    # warning_range_position_max:
+    # - 作用：warning 识别里，日内位置必须弱到该阈值以下
+    warning_range_position_max: 0.35
+    # warning_flow_score_max:
+    # - 作用：warning 识别里，资金承接分必须低于该阈值
+    warning_flow_score_max: 0.4
+    # weak_pct_max:
+    # - 作用：weak 识别的日内涨跌幅上限
+    weak_pct_max: -0.04
+    # weak_open_ret_max:
+    # - 作用：weak 识别的从开盘到当前收益上限
+    weak_open_ret_max: -0.03
+    # weak_range_position_max:
+    # - 作用：weak 识别的日内位置上限
+    weak_range_position_max: 0.2
+    # weak_flow_score_max:
+    # - 作用：weak 识别的资金承接分上限
+    weak_flow_score_max: 0.3

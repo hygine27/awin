@@ -2,15 +2,16 @@ from __future__ import annotations
 
 from collections import defaultdict
 from pathlib import Path
+from typing import Any, Mapping
 
 from awin.adapters.contracts import DcfSnapshotRow, QmtSnapshotRow, StockMasterRow, ThsConceptRow, ThsHotConceptRow
 from awin.config import ConfigError, get_app_config
 from awin.contracts.m0 import MarketUnderstandingOutput, MetaThemeItem, StyleRankingItem
+from awin.fund_flow_profile import FundFlowSnapshot
+from awin.style_matching import SUPPORTED_STYLE_BASKET_KEYS, SUPPORTED_STYLE_MATCH_MODES, style_rule_matches
 from awin.utils.structured_config import load_structured_config
 from awin.utils.symbols import normalize_stock_code
 
-
-SUPPORTED_STYLE_BASKET_KEYS = {"industries", "market_types"}
 SUPPORTED_STYLE_THRESHOLD_KEYS = {
     "min_constituents",
     "strong_move_pct",
@@ -94,13 +95,54 @@ def _validate_style_config(payload: dict, path: Path) -> tuple[dict[str, dict[st
             section_name=f"style_baskets.{style_name}",
             field_name="market_types",
         )
-        if not industries and not market_types:
+        ownership_styles = _validate_string_list(
+            raw_rule.get("ownership_styles"),
+            path=path,
+            section_name=f"style_baskets.{style_name}",
+            field_name="ownership_styles",
+        )
+        size_bucket_abs_in = _validate_string_list(
+            raw_rule.get("size_bucket_abs_in"),
+            path=path,
+            section_name=f"style_baskets.{style_name}",
+            field_name="size_bucket_abs_in",
+        )
+        size_bucket_pct_in = _validate_string_list(
+            raw_rule.get("size_bucket_pct_in"),
+            path=path,
+            section_name=f"style_baskets.{style_name}",
+            field_name="size_bucket_pct_in",
+        )
+        capacity_bucket_in = _validate_string_list(
+            raw_rule.get("capacity_bucket_in"),
+            path=path,
+            section_name=f"style_baskets.{style_name}",
+            field_name="capacity_bucket_in",
+        )
+        composite_labels = _validate_string_list(
+            raw_rule.get("composite_labels"),
+            path=path,
+            section_name=f"style_baskets.{style_name}",
+            field_name="composite_labels",
+        )
+        match_mode = str(raw_rule.get("match_mode") or "any").strip().lower()
+        if match_mode not in SUPPORTED_STYLE_MATCH_MODES:
             raise ConfigError(
-                f"invalid style config at {path}: style_baskets.{style_name} must define industries or market_types"
+                f"invalid style config at {path}: style_baskets.{style_name}.match_mode must be one of {', '.join(sorted(SUPPORTED_STYLE_MATCH_MODES))}"
+            )
+        if not industries and not market_types and not ownership_styles and not size_bucket_abs_in and not size_bucket_pct_in and not capacity_bucket_in and not composite_labels:
+            raise ConfigError(
+                f"invalid style config at {path}: style_baskets.{style_name} must define at least one selector"
             )
         style_baskets[str(style_name)] = {
             "industries": industries,
             "market_types": market_types,
+            "ownership_styles": ownership_styles,
+            "size_bucket_abs_in": size_bucket_abs_in,
+            "size_bucket_pct_in": size_bucket_pct_in,
+            "capacity_bucket_in": capacity_bucket_in,
+            "composite_labels": composite_labels,
+            "match_mode": match_mode,
         }
 
     thresholds = {key: float(raw_thresholds[key]) for key in SUPPORTED_STYLE_THRESHOLD_KEYS}
@@ -159,13 +201,12 @@ def _pct_chg_prev_close(last_price: float | None, last_close: float | None) -> f
     return float(last_price) / float(last_close) - 1.0
 
 
-def _style_matches(style_rule: dict, master: StockMasterRow) -> bool:
-    industries = set(style_rule.get("industries", []))
-    market_types = set(style_rule.get("market_types", []))
-    return (
-        (master.industry in industries if industries else False)
-        or (master.market in market_types if market_types else False)
-    )
+def _style_profile_field(profile: Mapping[str, Any] | None, field_name: str) -> str | None:
+    if profile is None:
+        return None
+    value = profile.get(field_name)
+    text = str(value or "").strip()
+    return text or None
 
 
 def _score_buckets(
@@ -332,6 +373,8 @@ def compute_market_understanding(
     *,
     ths_hot_concepts: list[ThsHotConceptRow] | None = None,
     market_tape: dict | None = None,
+    style_profiles: list[Mapping[str, Any]] | None = None,
+    fund_flow_snapshot: FundFlowSnapshot | None = None,
     style_baskets_config_path: Path | None = None,
     overlay_config_path: Path | None = None,
 ) -> MarketUnderstandingOutput:
@@ -356,6 +399,11 @@ def compute_market_understanding(
         if item.is_listed and not item.is_st
     }
     dcf_by_symbol = {item.symbol: item for item in dcf_snapshot}
+    style_profile_by_symbol = {
+        str(profile.get("symbol") or "").strip(): profile
+        for profile in (style_profiles or [])
+        if str(profile.get("symbol") or "").strip()
+    }
 
     concept_map: dict[str, list[ThsConceptRow]] = defaultdict(list)
     for row in ths_concepts:
@@ -383,6 +431,7 @@ def compute_market_understanding(
         pct = _pct_chg_prev_close(qmt.last_price, qmt.last_close)
         range_position = _range_position(qmt.last_price, qmt.high_price, qmt.low_price)
         dcf = dcf_by_symbol.get(qmt.symbol)
+        style_profile = style_profile_by_symbol.get(qmt.symbol)
         volume_ratio = dcf.volume_ratio if dcf else None
 
         row = {
@@ -401,7 +450,16 @@ def compute_market_understanding(
         stock_rows.append(row)
 
         for style_name, style_rule in style_baskets.items():
-            if _style_matches(style_rule, master):
+            if style_rule_matches(
+                style_rule,
+                industry=master.industry,
+                market_type=master.market,
+                ownership_style=_style_profile_field(style_profile, "ownership_style"),
+                size_bucket_abs=_style_profile_field(style_profile, "size_bucket_abs"),
+                size_bucket_pct=_style_profile_field(style_profile, "size_bucket_pct"),
+                capacity_bucket=_style_profile_field(style_profile, "capacity_bucket"),
+                composite_labels=list(style_profile.get("composite_style_labels") or []) if style_profile else [],
+            ):
                 style_members[style_name].append(row)
         for concept_name in row["concepts"]:
             concept_members[concept_name].append(row)
@@ -606,6 +664,17 @@ def compute_market_understanding(
         evidence_lines.append(
             f"- 主线解释：{theme.meta_theme} 当前最强，细分概念看 {' / '.join(theme.strongest_concepts) if theme.strongest_concepts else '暂无'}。"
         )
+    if fund_flow_snapshot and top_meta_themes:
+        concept_flow_map = {item.concept_name: item for item in fund_flow_snapshot.concept_profiles}
+        theme = top_meta_themes[0]
+        funded_concepts = []
+        for concept_name in theme.strongest_concepts[:2]:
+            concept_flow = concept_flow_map.get(concept_name)
+            if concept_flow is None or concept_flow.net_amount_1d is None:
+                continue
+            funded_concepts.append(f"{concept_name} 近1日净流入 {concept_flow.net_amount_1d:.0f}")
+        if funded_concepts:
+            evidence_lines.append(f"- 主线资金：{'；'.join(funded_concepts)}。")
     if acceleration_concepts:
         evidence_lines.append(f"- 加速方向：{' / '.join(acceleration_concepts)} 当前抬升最快。")
     if tape_regime:
@@ -615,6 +684,12 @@ def compute_market_understanding(
     else:
         evidence_lines.append(
             f"- 市场环境：{market_regime}，全市场上涨占比约 {(market_up_ratio * 100):.1f}% ，强势股占比约 {(market_strong_ratio * 100):.1f}% 。"
+        )
+    if fund_flow_snapshot and fund_flow_snapshot.market_profile and fund_flow_snapshot.market_profile.net_amount_1d is not None:
+        market_flow = fund_flow_snapshot.market_profile
+        evidence_lines.append(
+            f"- 市场资金：近1日市场级净流入 {market_flow.net_amount_1d:.0f}，"
+            f"超大单 {market_flow.super_large_net_1d or 0.0:.0f}，大单 {market_flow.large_order_net_1d or 0.0:.0f}。"
         )
 
     return MarketUnderstandingOutput(

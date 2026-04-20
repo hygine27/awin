@@ -12,6 +12,7 @@ if str(SRC_DIR) not in sys.path:
 
 from awin.adapters.contracts import DcfSnapshotRow, QmtSnapshotRow, StockMasterRow, ThsConceptRow, ThsHotConceptRow
 from awin.config import ConfigError
+from awin.fund_flow_profile import build_fund_flow_snapshot
 from awin.market_understanding import compute_market_understanding, load_style_baskets
 
 
@@ -127,6 +128,52 @@ score_weights:
         self.assertIn("主风格", output.summary_line)
         self.assertTrue(output.evidence_lines)
 
+    def test_compute_market_understanding_includes_fund_flow_evidence_when_available(self) -> None:
+        stock_master = [
+            StockMasterRow(symbol=f"3000{i:02d}.SZ", stock_code=f"3000{i:02d}", stock_name=f"S{i}", industry="软件服务", market="创业板")
+            for i in range(1, 13)
+        ]
+        qmt_rows = [
+            QmtSnapshotRow(
+                symbol=item.symbol,
+                stock_code=item.stock_code,
+                trade_date="2026-04-16",
+                snapshot_time="10:35:00",
+                last_price=10.5,
+                last_close=10.0,
+                open_price=10.1,
+                high_price=10.6,
+                low_price=10.0,
+                volume=100000,
+                amount=1000000,
+            )
+            for item in stock_master
+        ]
+        dcf_rows = [DcfSnapshotRow(symbol=item.symbol, trade_date="2026-04-16", volume_ratio=1.5, turnover_rate=0.03) for item in stock_master]
+        ths_rows = [
+            ThsConceptRow(symbol=item.symbol, stock_code=item.stock_code, concept_name="共封装光学(CPO)", meta_theme="光通信_CPO")
+            for item in stock_master
+        ]
+        fund_flow_snapshot = build_fund_flow_snapshot(
+            moneyflow_ths_rows=[],
+            moneyflow_dc_rows=[],
+            moneyflow_cnt_rows=[{"ts_code": "885001.TI", "name": "共封装光学(CPO)", "trade_date": "2026-04-16", "pct_change": 2.5, "net_amount": 150.0}],
+            moneyflow_ind_rows=[],
+            moneyflow_mkt_rows=[{"trade_date": "2026-04-16", "net_amount": 80.0, "net_amount_rate": 0.03, "buy_elg_amount": 30.0, "buy_lg_amount": 20.0}],
+        )
+
+        output = compute_market_understanding(
+            stock_master,
+            qmt_rows,
+            dcf_rows,
+            ths_rows,
+            fund_flow_snapshot=fund_flow_snapshot,
+        )
+
+        joined = "\n".join(output.evidence_lines)
+        self.assertIn("主线资金", joined)
+        self.assertIn("市场资金", joined)
+
     def test_compute_market_understanding_prefers_actionable_market_tape_regime(self) -> None:
         stock_master = [
             StockMasterRow(symbol="300001.SZ", stock_code="300001", stock_name="A", industry="软件服务", market="创业板"),
@@ -198,6 +245,112 @@ score_weights:
             market_tape={"market_regime": "mixed_tape", "regime_actionable": True},
         )
         self.assertEqual(output.market_regime, "trend_expansion")
+
+    def test_load_style_baskets_accepts_style_profile_selectors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "style_config.yaml"
+            config_path.write_text(
+                """
+style_baskets:
+  小盘题材:
+    match_mode: all
+    size_bucket_pct_in: [小盘, 微盘]
+    capacity_bucket_in: [中小票, 微盘弹性]
+thresholds:
+  min_constituents: 12
+  strong_move_pct: 0.02
+  near_high_threshold: 0.8
+  active_pace_threshold: 1.2
+score_weights:
+  eq_return: 0.4
+  up_ratio: 0.2
+  strong_ratio: 0.15
+  near_high_ratio: 0.15
+  activity_ratio: 0.1
+                """.strip(),
+                encoding="utf-8",
+            )
+
+            style_baskets, thresholds = load_style_baskets(config_path)
+
+        self.assertEqual(style_baskets["小盘题材"]["match_mode"], "all")
+        self.assertEqual(style_baskets["小盘题材"]["size_bucket_pct_in"], ["小盘", "微盘"])
+        self.assertEqual(style_baskets["小盘题材"]["capacity_bucket_in"], ["中小票", "微盘弹性"])
+        self.assertEqual(thresholds["min_constituents"], 12)
+
+    def test_compute_market_understanding_uses_style_profiles_for_style_matching(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "style_config.yaml"
+            config_path.write_text(
+                """
+style_baskets:
+  小盘题材:
+    match_mode: all
+    size_bucket_pct_in: [小盘, 微盘]
+    capacity_bucket_in: [中小票, 微盘弹性]
+thresholds:
+  min_constituents: 12
+  strong_move_pct: 0.02
+  near_high_threshold: 0.8
+  active_pace_threshold: 1.2
+score_weights:
+  eq_return: 0.4
+  up_ratio: 0.2
+  strong_ratio: 0.15
+  near_high_ratio: 0.15
+  activity_ratio: 0.1
+                """.strip(),
+                encoding="utf-8",
+            )
+
+            stock_master = [
+                StockMasterRow(symbol=f"0000{i:02d}.SZ", stock_code=f"0000{i:02d}", stock_name=f"S{i}", industry="银行", market="主板")
+                for i in range(1, 13)
+            ]
+            qmt_rows = [
+                QmtSnapshotRow(
+                    symbol=item.symbol,
+                    stock_code=item.stock_code,
+                    trade_date="2026-04-16",
+                    snapshot_time="10:35:00",
+                    last_price=10.4,
+                    last_close=10.0,
+                    open_price=10.1,
+                    high_price=10.5,
+                    low_price=10.0,
+                    volume=100000,
+                    amount=1000000,
+                )
+                for item in stock_master
+            ]
+            dcf_rows = [
+                DcfSnapshotRow(symbol=item.symbol, trade_date="2026-04-16", volume_ratio=1.4, turnover_rate=0.03)
+                for item in stock_master
+            ]
+            style_profiles = [
+                {
+                    "symbol": item.symbol,
+                    "ownership_style": "民企",
+                    "size_bucket_abs": "小盘",
+                    "size_bucket_pct": "微盘",
+                    "capacity_bucket": "微盘弹性",
+                    "composite_style_labels": [],
+                }
+                for item in stock_master
+            ]
+
+            output = compute_market_understanding(
+                stock_master,
+                qmt_rows,
+                dcf_rows,
+                [],
+                style_profiles=style_profiles,
+                style_baskets_config_path=config_path,
+            )
+
+        self.assertEqual(output.confirmed_style, "小盘题材")
+        self.assertTrue(output.top_styles)
+        self.assertEqual(output.top_styles[0].style_name, "小盘题材")
 
 
 if __name__ == "__main__":

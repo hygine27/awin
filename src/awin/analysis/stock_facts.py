@@ -3,9 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any, Mapping
 
 from awin.adapters.contracts import DcfSnapshotRow, QmtBar1dRow, QmtSnapshotRow, ResearchCoverageRow, StockMasterRow, ThsConceptRow
+from awin.fund_flow_profile import FundFlowSnapshot
 from awin.market_understanding.engine import load_style_baskets
+from awin.style_matching import style_rule_matches
 from awin.utils.symbols import normalize_stock_code
 
 
@@ -48,6 +51,33 @@ class StockFact:
     ret_5d: float | None
     ret_10d: float | None
     ret_20d: float | None
+    dividend_value_score: float | None = None
+    growth_valuation_score: float | None = None
+    quality_growth_score: float | None = None
+    sales_growth_score: float | None = None
+    profit_growth_score: float | None = None
+    low_vol_defensive_score: float | None = None
+    high_beta_attack_score: float | None = None
+    dividend_style: str | None = None
+    valuation_style: str | None = None
+    growth_style: str | None = None
+    quality_style: str | None = None
+    volatility_style: str | None = None
+    ownership_style: str | None = None
+    capacity_bucket: str | None = None
+    composite_style_labels: list[str] = field(default_factory=list)
+    main_net_amount_1d: float | None = None
+    main_net_amount_3d_sum: float | None = None
+    main_net_amount_5d_sum: float | None = None
+    main_net_amount_10d_sum: float | None = None
+    main_net_amount_rate_1d: float | None = None
+    ths_net_d5_amount: float | None = None
+    super_large_net_1d: float | None = None
+    large_order_net_1d: float | None = None
+    inflow_streak_days: int = 0
+    outflow_streak_days: int = 0
+    flow_acceleration_3d: float | None = None
+    price_flow_divergence_flag: bool = False
     meta_themes: list[str] = field(default_factory=list)
     concepts: list[str] = field(default_factory=list)
     style_names: list[str] = field(default_factory=list)
@@ -106,13 +136,18 @@ def _range_position(last_price: float | None, high_price: float | None, low_pric
     return max(0.0, min(1.0, value))
 
 
-def _style_matches(style_rule: dict, master: StockMasterRow) -> bool:
-    industries = set(style_rule.get("industries", []))
-    market_types = set(style_rule.get("market_types", []))
-    return (
-        (master.industry in industries if industries else False)
-        or (master.market in market_types if market_types else False)
-    )
+def _style_profile_field(profile: Mapping[str, Any] | None, field_name: str) -> str | None:
+    if profile is None:
+        return None
+    value = profile.get(field_name)
+    text = str(value or "").strip()
+    return text or None
+
+
+def _style_profile_float(profile: Mapping[str, Any] | None, field_name: str) -> float | None:
+    if profile is None:
+        return None
+    return _to_float(profile.get(field_name))
 
 
 def _bid_ask_imbalance(bid_volume1: float | None, ask_volume1: float | None) -> float | None:
@@ -167,6 +202,18 @@ def _build_avg_amount_20d_map(qmt_bars_1d: list[QmtBar1dRow], trade_date: str) -
     return out
 
 
+def _build_avg_amount_20d_map_from_metrics(
+    qmt_bar_metrics: list[Mapping[str, Any]],
+) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for row in qmt_bar_metrics:
+        symbol = str(row.get("symbol") or "").strip()
+        avg_amount_20d = _to_float(row.get("avg_amount_20d"))
+        if symbol and avg_amount_20d is not None:
+            out[symbol] = avg_amount_20d
+    return out
+
+
 def _build_intraday_return_map(
     qmt_bars_1d: list[QmtBar1dRow],
     qmt_snapshot: list[QmtSnapshotRow],
@@ -204,6 +251,39 @@ def _build_intraday_return_map(
     return out
 
 
+def _build_intraday_return_map_from_metrics(
+    qmt_snapshot: list[QmtSnapshotRow],
+    qmt_bar_metrics: list[Mapping[str, Any]],
+) -> dict[str, dict[int, float]]:
+    metrics_by_symbol = {
+        str(row.get("symbol") or "").strip(): row
+        for row in qmt_bar_metrics
+        if str(row.get("symbol") or "").strip()
+    }
+    out: dict[str, dict[int, float]] = {}
+    for qmt in qmt_snapshot:
+        current_price = _to_float(qmt.last_price)
+        if current_price is None or current_price <= 0:
+            continue
+        row = metrics_by_symbol.get(qmt.symbol)
+        if row is None:
+            continue
+        horizon_returns: dict[int, float] = {}
+        for horizon, field_name in (
+            (3, "close_3d_ago"),
+            (5, "close_5d_ago"),
+            (10, "close_10d_ago"),
+            (20, "close_20d_ago"),
+        ):
+            ref_close = _to_float(row.get(field_name))
+            if ref_close is None or ref_close <= 0:
+                continue
+            horizon_returns[horizon] = current_price / ref_close - 1.0
+        if horizon_returns:
+            out[qmt.symbol] = horizon_returns
+    return out
+
+
 def _assign_rank(facts: list[StockFact], attr_name: str, rank_attr_name: str, *, default_rank: float = 0.0) -> None:
     valid_values = [getattr(fact, attr_name) for fact in facts if getattr(fact, attr_name) is not None]
     if not valid_values:
@@ -230,6 +310,9 @@ def build_stock_facts(
     ths_concepts: list[ThsConceptRow],
     research_coverage: list[ResearchCoverageRow],
     *,
+    qmt_bar_metrics: list[Mapping[str, Any]] | None = None,
+    style_profiles: list[Mapping[str, Any]] | None = None,
+    fund_flow_snapshot: FundFlowSnapshot | None = None,
     style_baskets_config_path: Path | None = None,
 ) -> list[StockFact]:
     style_baskets, _ = load_style_baskets(style_baskets_config_path)
@@ -239,9 +322,27 @@ def build_stock_facts(
         if item.is_listed and not item.is_st
     }
     dcf_by_symbol = {item.symbol: item for item in dcf_snapshot}
+    style_profile_by_symbol = {
+        str(profile.get("symbol") or "").strip(): profile
+        for profile in (style_profiles or [])
+        if str(profile.get("symbol") or "").strip()
+    }
+    fund_flow_by_symbol = {
+        item.symbol: item
+        for item in (fund_flow_snapshot.stock_profiles if fund_flow_snapshot is not None else [])
+        if str(item.symbol).strip()
+    }
     research_by_symbol = {item.symbol: item for item in research_coverage}
-    avg_amount_20d_map = _build_avg_amount_20d_map(qmt_bars_1d, qmt_snapshot[0].trade_date if qmt_snapshot else "")
-    intraday_return_map = _build_intraday_return_map(qmt_bars_1d, qmt_snapshot, qmt_snapshot[0].trade_date if qmt_snapshot else "")
+    avg_amount_20d_map = (
+        _build_avg_amount_20d_map_from_metrics(qmt_bar_metrics or [])
+        if qmt_bar_metrics
+        else _build_avg_amount_20d_map(qmt_bars_1d, qmt_snapshot[0].trade_date if qmt_snapshot else "")
+    )
+    intraday_return_map = (
+        _build_intraday_return_map_from_metrics(qmt_snapshot, qmt_bar_metrics or [])
+        if qmt_bar_metrics
+        else _build_intraday_return_map(qmt_bars_1d, qmt_snapshot, qmt_snapshot[0].trade_date if qmt_snapshot else "")
+    )
 
     concepts_by_symbol: dict[str, list[ThsConceptRow]] = {}
     for row in ths_concepts:
@@ -255,11 +356,28 @@ def build_stock_facts(
             continue
 
         dcf = dcf_by_symbol.get(qmt.symbol)
+        style_profile = style_profile_by_symbol.get(qmt.symbol)
         research = research_by_symbol.get(qmt.symbol)
+        fund_flow = fund_flow_by_symbol.get(qmt.symbol)
         concept_rows = concepts_by_symbol.get(qmt.symbol, [])
         meta_themes = sorted({item.meta_theme for item in concept_rows if item.meta_theme})
         concepts = sorted({item.concept_name for item in concept_rows if item.concept_name})
-        style_names = sorted([style_name for style_name, style_rule in style_baskets.items() if _style_matches(style_rule, master)])
+        style_names = sorted(
+            [
+                style_name
+                for style_name, style_rule in style_baskets.items()
+                if style_rule_matches(
+                    style_rule,
+                    industry=master.industry,
+                    market_type=master.market,
+                    ownership_style=_style_profile_field(style_profile, "ownership_style"),
+                    size_bucket_abs=_style_profile_field(style_profile, "size_bucket_abs"),
+                    size_bucket_pct=_style_profile_field(style_profile, "size_bucket_pct"),
+                    capacity_bucket=_style_profile_field(style_profile, "capacity_bucket"),
+                    composite_labels=list(style_profile.get("composite_style_labels") or []) if style_profile else [],
+                )
+            ]
+        )
         elapsed_ratio = _elapsed_ratio(qmt.snapshot_time)
         avg_amount_20d = avg_amount_20d_map.get(qmt.symbol)
         return_map = intraday_return_map.get(qmt.symbol, {})
@@ -303,6 +421,33 @@ def build_stock_facts(
             ret_5d=return_map.get(5, _to_float(dcf.ret_5d) if dcf else None),
             ret_10d=return_map.get(10, _to_float(dcf.ret_10d) if dcf else None),
             ret_20d=return_map.get(20, _to_float(dcf.ret_20d) if dcf else None),
+            dividend_value_score=_style_profile_float(style_profile, "dividend_value_score"),
+            growth_valuation_score=_style_profile_float(style_profile, "growth_valuation_score"),
+            quality_growth_score=_style_profile_float(style_profile, "quality_growth_score"),
+            sales_growth_score=_style_profile_float(style_profile, "sales_growth_score"),
+            profit_growth_score=_style_profile_float(style_profile, "profit_growth_score"),
+            low_vol_defensive_score=_style_profile_float(style_profile, "low_vol_defensive_score"),
+            high_beta_attack_score=_style_profile_float(style_profile, "high_beta_attack_score"),
+            dividend_style=_style_profile_field(style_profile, "dividend_style"),
+            valuation_style=_style_profile_field(style_profile, "valuation_style"),
+            growth_style=_style_profile_field(style_profile, "growth_style"),
+            quality_style=_style_profile_field(style_profile, "quality_style"),
+            volatility_style=_style_profile_field(style_profile, "volatility_style"),
+            ownership_style=_style_profile_field(style_profile, "ownership_style"),
+            capacity_bucket=_style_profile_field(style_profile, "capacity_bucket"),
+            composite_style_labels=list(style_profile.get("composite_style_labels") or []) if style_profile else [],
+            main_net_amount_1d=_to_float(fund_flow.main_net_amount_1d) if fund_flow else None,
+            main_net_amount_3d_sum=_to_float(fund_flow.main_net_amount_3d_sum) if fund_flow else None,
+            main_net_amount_5d_sum=_to_float(fund_flow.main_net_amount_5d_sum) if fund_flow else None,
+            main_net_amount_10d_sum=_to_float(fund_flow.main_net_amount_10d_sum) if fund_flow else None,
+            main_net_amount_rate_1d=_to_float(fund_flow.main_net_amount_rate_1d) if fund_flow else None,
+            ths_net_d5_amount=_to_float(fund_flow.ths_net_d5_amount) if fund_flow else None,
+            super_large_net_1d=_to_float(fund_flow.super_large_net_1d) if fund_flow else None,
+            large_order_net_1d=_to_float(fund_flow.large_order_net_1d) if fund_flow else None,
+            inflow_streak_days=int(fund_flow.inflow_streak_days) if fund_flow else 0,
+            outflow_streak_days=int(fund_flow.outflow_streak_days) if fund_flow else 0,
+            flow_acceleration_3d=_to_float(fund_flow.flow_acceleration_3d) if fund_flow else None,
+            price_flow_divergence_flag=bool(fund_flow.price_flow_divergence_flag) if fund_flow else False,
             meta_themes=meta_themes,
             concepts=concepts,
             style_names=style_names,

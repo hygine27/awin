@@ -211,6 +211,14 @@ def _candidate(
             "ret_3d": fact.ret_3d,
             "ret_5d": fact.ret_5d,
             "ret_10d": fact.ret_10d,
+            "dividend_value_score": fact.dividend_value_score,
+            "quality_growth_score": fact.quality_growth_score,
+            "high_beta_attack_score": fact.high_beta_attack_score,
+            "low_vol_defensive_score": fact.low_vol_defensive_score,
+            "main_net_amount_5d_sum": fact.main_net_amount_5d_sum,
+            "inflow_streak_days": fact.inflow_streak_days,
+            "flow_acceleration_3d": fact.flow_acceleration_3d,
+            "price_flow_divergence_flag": fact.price_flow_divergence_flag,
             "style_names": fact.style_names,
             **payload,
         },
@@ -496,13 +504,37 @@ def _long_score_breakdown(
     )
     tape = min(LONG_SCORE_CAPS["tape"], tape)
 
-    total = max(1.0, min(10.0, round(alignment + dual_support + temperature + research + tape, 1)))
+    profile_rules = LONG_SCORE_RULES["profile"]
+    style_hint = META_TO_STYLE_HINT.get(best_meta_theme)
+    profile = 0.0
+    if style_hint == "科技成长":
+        profile += _safe(fact.quality_growth_score) * float(profile_rules["growth_quality_weight"])
+        profile += _safe(fact.high_beta_attack_score) * float(profile_rules["attack_weight"])
+    elif style_hint in {"红利价值", "消费医药防御"}:
+        profile += _safe(fact.dividend_value_score) * float(profile_rules["dividend_weight"])
+        profile += _safe(fact.low_vol_defensive_score) * float(profile_rules["defensive_weight"])
+    else:
+        profile += _safe(fact.quality_growth_score) * float(profile_rules["growth_quality_weight"]) * 0.5
+    if int(fact.inflow_streak_days or 0) >= int(profile_rules["inflow_streak_min"]):
+        profile += float(profile_rules["inflow_streak_bonus"])
+    if _safe(fact.main_net_amount_5d_sum) > 0:
+        profile += float(profile_rules["net_5d_positive_bonus"])
+    if _safe(fact.flow_acceleration_3d) > 0:
+        profile += float(profile_rules["acceleration_positive_bonus"])
+    if fact.price_flow_divergence_flag:
+        profile -= float(profile_rules["divergence_penalty"])
+    if str(fact.capacity_bucket or "").strip() in {"机构核心容量", "机构容量", "中大票容量"}:
+        profile += float(profile_rules["capacity_anchor_bonus"])
+    profile = max(0.0, min(LONG_SCORE_CAPS["profile"], profile))
+
+    total = max(1.0, min(10.0, round(alignment + dual_support + temperature + research + tape + profile, 1)))
     return total, {
         "alignment": round(alignment, 2),
         "dual_support": round(dual_support, 2),
         "temperature": round(temperature, 2),
         "research": round(research, 2),
         "tape": round(tape, 2),
+        "profile": round(profile, 2),
         **context,
     }
 

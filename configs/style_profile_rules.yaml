@@ -1,0 +1,266 @@
+# 慢变量风格画像规则。
+# 用于把单只股票映射到容量、产权、大小盘等稳定标签。
+# 这份配置回答的问题是：
+# - 这只股票更像大票还是小票
+# - 更像机构容量票还是微盘弹性票
+# - 更像央国企还是民企
+# - 有没有一些跨行业但业务上重要的复合风格标签
+#
+# 注意：
+# - 这里很多字段是“代理变量”，不是市场原生标准标签
+# - 比如 capacity_bucket 当前主要基于流通市值近似，不等于正式“中军标签”
+ownership:
+  # default_label:
+  # - 作用：企业属性无法识别时使用的默认产权标签
+  default_label: 未识别
+  rules:
+    # label:
+    # - 作用：输出给股票画像层的产权标签
+    # match_any:
+    # - 作用：只要企业属性文本中命中任一关键词，就归到该标签
+    - label: 央国企
+      match_any: [国有, 央企, 国企]
+    - label: 民企
+      match_any: [民营, 私营, 自然人, 个人]
+    - label: 混合属性
+      match_any: [外商, 港澳台, 合资, 混合, 集体, 公众]
+
+# size_bucket_abs_rules:
+# - 作用：按流通市值绝对值给股票分层
+# - 单位：通常沿用“万元”口径，取决于上游 float_mv 字段口径
+# - 用途：构建大小盘绝对尺度标签
+size_bucket_abs_rules:
+  - label: 超大盘
+    # min_float_mv:
+    # - 作用：进入该档位所需的最小流通市值
+    min_float_mv: 10000000
+  - label: 大盘
+    min_float_mv: 3000000
+  - label: 中盘
+    min_float_mv: 1000000
+  - label: 小盘
+    min_float_mv: 300000
+  - label: 微盘
+    min_float_mv: 0
+
+# capacity_bucket_rules:
+# - 作用：按“机构是否容易参与”的近似容量进行分层
+# - 当前定义方式：主要看流通市值
+# - 限制：这不是正式市场字段，也不等于真实“中军”识别，只是第一阶段代理
+capacity_bucket_rules:
+  - label: 机构核心容量
+    min_float_mv: 3000000
+  - label: 机构可做容量
+    min_float_mv: 1000000
+  - label: 中小票
+    min_float_mv: 300000
+  - label: 微盘弹性
+    min_float_mv: 0
+
+# size_bucket_pct_rules:
+# - 作用：按全市场相对排名给股票分层
+# - 单位：0~1 的流通市值分位数，越高说明越偏大盘
+# - 用途：构建相对大小盘标签，避免只看绝对市值
+size_bucket_pct_rules:
+  - label: 超大盘
+    # min_rank_pct:
+    # - 作用：进入该档位所需的最小分位数
+    min_rank_pct: 0.9
+  - label: 大盘
+    min_rank_pct: 0.75
+  - label: 中盘
+    min_rank_pct: 0.4
+  - label: 小盘
+    min_rank_pct: 0.1
+  - label: 微盘
+    min_rank_pct: 0.0
+
+# 历史窗口定义。
+# 作用：
+# - 统一 style_profile 里所有历史类指标的窗口长度
+# - 所有窗口都只基于 T-1 及更早历史数据，不使用当日未完成数据
+history_windows:
+  # amount_20d:
+  # - 作用：近 20 个交易日平均成交额窗口
+  amount_20d: 20
+  # ret_20d / ret_60d:
+  # - 作用：中期动量窗口
+  ret_20d: 20
+  ret_60d: 60
+  # vol_20d / vol_60d:
+  # - 作用：历史波动率窗口
+  vol_20d: 20
+  vol_60d: 60
+  # max_drawdown_20d / max_drawdown_60d:
+  # - 作用：历史最大回撤窗口
+  max_drawdown_20d: 20
+  max_drawdown_60d: 60
+
+# 风格分数权重。
+# 作用：
+# - 定义各类慢变量风格分数的横截面组合方式
+# - 带 `_inverse` 的字段表示“值越小越好”
+# - `small_cap` 表示“小市值越强”
+score_weights:
+  # 红利价值：
+  # - 高股息加分
+  # - 低估值加分
+  dividend_value:
+    dv_ttm: 0.45
+    dv_ratio: 0.15
+    pe_ttm_inverse: 0.15
+    pb_inverse: 0.15
+    ps_ttm_inverse: 0.10
+  # 成长估值：
+  # - 高增长 + 高成长估值的联合暴露
+  growth_valuation:
+    tr_yoy: 0.25
+    or_yoy: 0.25
+    netprofit_yoy: 0.20
+    dt_netprofit_yoy: 0.15
+    pe_ttm: 0.075
+    ps_ttm: 0.075
+  # 质量成长：
+  # - 更看重回报率、资本效率和财务稳健
+  quality_growth:
+    roe_yearly: 0.35
+    roic: 0.25
+    debt_to_assets_inverse: 0.20
+    q_ocf_to_sales: 0.20
+  # 收入成长：
+  # - 更看重收入端扩张
+  sales_growth:
+    tr_yoy: 0.45
+    or_yoy: 0.35
+    q_sales_yoy: 0.20
+  # 利润成长：
+  # - 更看重利润端扩张和扣非质量
+  profit_growth:
+    netprofit_yoy: 0.45
+    dt_netprofit_yoy: 0.35
+    op_yoy: 0.20
+  # 低波防御：
+  # - 低波、低回撤和高分红共同构成防御得分
+  low_vol_defensive:
+    vol_20d_inverse: 0.25
+    vol_60d_inverse: 0.25
+    max_drawdown_20d_inverse: 0.15
+    max_drawdown_60d_inverse: 0.15
+    dv_ttm: 0.20
+  # 高弹性进攻：
+  # - 高波动、高换手和小盘弹性共同构成进攻得分
+  high_beta_attack:
+    vol_20d: 0.25
+    vol_60d: 0.20
+    turnover_rate_f: 0.20
+    small_cap: 0.20
+    ret_20d: 0.15
+
+# 业务标签辅助分数权重。
+# 作用：
+# - 这些分数不直接作为首屏展示字段，而是作为“业务标签”的分档底座
+# - 目的是把工程分数进一步翻译成基金经理更容易理解的口径
+# 使用方式：
+# - 先按下面的权重计算横截面分数
+# - 再由 business_label_rules 把分数映射成最终标签
+business_label_score_weights:
+  # valuation_balance:
+  # - 作用：衡量股票在估值层面更偏低估还是高估
+  # - 分数越高，表示横截面上越偏低估值
+  valuation_balance:
+    pe_ttm_inverse: 0.40
+    pb_inverse: 0.35
+    ps_ttm_inverse: 0.25
+  # growth_balance:
+  # - 作用：衡量收入与利润的综合成长性
+  # - 分数越高，表示横截面上越偏高成长
+  growth_balance:
+    tr_yoy: 0.25
+    or_yoy: 0.20
+    q_sales_yoy: 0.15
+    netprofit_yoy: 0.20
+    dt_netprofit_yoy: 0.15
+    op_yoy: 0.05
+  # stability_balance:
+  # - 作用：衡量股票是否更偏低波、低回撤、防御属性
+  # - 分数越高，表示越偏稳定；分数越低，表示越偏高弹性
+  stability_balance:
+    vol_20d_inverse: 0.35
+    vol_60d_inverse: 0.35
+    max_drawdown_20d_inverse: 0.15
+    max_drawdown_60d_inverse: 0.15
+
+# 业务标签分档规则。
+# 作用：
+# - 把慢变量分数翻译成可直接展示的业务标签
+# - field: 输出到 style_profile / stock_snapshot / runtime 的标签字段名
+# - source_score: 该标签依赖哪个分数；可以是 score_weights 计算出来的主分数，也可以是
+#   business_label_score_weights 计算出来的辅助分数
+# - bands: 采用“从高到低”的阈值分档；命中第一个满足 min_score 的标签
+business_label_rules:
+  - field: dividend_style
+    # source_score:
+    # - 作用：指定红利标签基于哪个分数来分档
+    source_score: dividend_value_score
+    bands:
+      - label: 红利核心
+        min_score: 0.75
+      - label: 红利增强
+        min_score: 0.55
+      - label: 中性
+        min_score: 0.35
+      - label: 低股息
+        min_score: 0.0
+  - field: valuation_style
+    source_score: valuation_balance
+    bands:
+      - label: 低估值
+        min_score: 0.70
+      - label: 中估值
+        min_score: 0.35
+      - label: 高估值
+        min_score: 0.0
+  - field: growth_style
+    source_score: growth_balance
+    bands:
+      - label: 高成长
+        min_score: 0.70
+      - label: 中成长
+        min_score: 0.35
+      - label: 低成长
+        min_score: 0.0
+  - field: quality_style
+    source_score: quality_growth_score
+    bands:
+      - label: 高质量
+        min_score: 0.70
+      - label: 中质量
+        min_score: 0.35
+      - label: 低质量
+        min_score: 0.0
+  - field: volatility_style
+    source_score: stability_balance
+    bands:
+      - label: 低波
+        min_score: 0.70
+      - label: 中波
+        min_score: 0.35
+      - label: 高弹性
+        min_score: 0.0
+
+# 复合风格标签。
+# 作用：
+# - 这类标签不是单一字段直接给出的，而是由多个慢变量条件组合得到
+# - 用于补足业务上更自然的风格描述
+composite_label_rules:
+  - label: 金融地产链
+    # sw_l1_names:
+    # - 作用：如果股票申万一级行业属于这些行业，则打上该复合标签
+    sw_l1_names: [非银金融, 银行, 房地产, 建筑材料, 建筑装饰]
+  - label: 小盘题材
+    # size_bucket_pct_in:
+    # - 作用：要求股票在相对大小盘分层上属于这些档位
+    size_bucket_pct_in: [小盘, 微盘]
+    # capacity_bucket_in:
+    # - 作用：要求股票在容量分层上属于这些档位
+    capacity_bucket_in: [微盘弹性]

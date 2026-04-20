@@ -199,6 +199,40 @@ class DcfHqZjSnapshotAdapter(DbBackedAdapter):
         """
         return sql, {"trade_date": request.trade_date, "batch_ts": batch_ts}
 
+    def build_hq_data_query(self, request: SnapshotRequest, batch_ts: str) -> tuple[str, dict[str, str]]:
+        sql = """
+        select
+          code,
+          trade_date::text as trade_date,
+          batch_ts::text as vendor_batch_ts,
+          turnover_pct as turnover_rate,
+          volume_ratio,
+          amplitude_pct as amplitude,
+          float_mkt_cap,
+          total_mkt_cap,
+          change_3d_pct as ret_3d,
+          null::real as ret_5d,
+          change_6d_pct as ret_10d,
+          change_1m_pct as ret_20d
+        from stg.dcf_cli_hq
+        where trade_date = %(trade_date)s
+          and batch_ts = %(batch_ts)s::timestamptz
+        """
+        return sql, {"trade_date": request.trade_date, "batch_ts": batch_ts}
+
+    def build_zj_data_query(self, request: SnapshotRequest, batch_ts: str) -> tuple[str, dict[str, str]]:
+        sql = """
+        select
+          code,
+          main_net_inflow,
+          super_net,
+          large_net
+        from stg.dcf_cli_zj
+        where trade_date = %(trade_date)s
+          and batch_ts = %(batch_ts)s::timestamptz
+        """
+        return sql, {"trade_date": request.trade_date, "batch_ts": batch_ts}
+
     def evaluate_guard(
         self,
         request: SnapshotRequest,
@@ -258,10 +292,20 @@ class DcfHqZjSnapshotAdapter(DbBackedAdapter):
         if chosen is None:
             return [], health
 
-        data_sql, data_params = self.build_data_query(request, str(chosen["batch_ts"]))
-        result = self._query_rows(data_sql, data_params) or []
+        hq_sql, hq_params = self.build_hq_data_query(request, str(chosen["batch_ts"]))
+        zj_sql, zj_params = self.build_zj_data_query(request, str(chosen["batch_ts"]))
+        hq_rows = self._query_rows(hq_sql, hq_params) or []
+        zj_rows = self._query_rows(zj_sql, zj_params) or []
+        zj_by_code = {str(item.get("code") or "").strip(): item for item in zj_rows if str(item.get("code") or "").strip()}
         rows = []
-        for payload in result:
+        for payload in hq_rows:
+            code = str(payload.get("code") or "").strip()
+            if not code:
+                continue
+            payload = dict(payload)
+            payload.update(zj_by_code.get(code, {}))
+            payload["symbol"] = code
+            payload.pop("code", None)
             stock_code = normalize_stock_code(payload.get("symbol"))
             payload["symbol"] = infer_symbol_from_stock_code(stock_code)
             for field_name in NUMERIC_FIELDS:

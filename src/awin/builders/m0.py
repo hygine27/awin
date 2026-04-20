@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 
 from awin.adapters import (
     DcfHqZjSnapshotAdapter,
     QmtAshareSnapshot5mAdapter,
-    QmtBar1dAdapter,
+    QmtBar1dMetricsAdapter,
     ResearchCoverageAdapter,
     SnapshotRequest,
     StockMasterAdapter,
@@ -16,6 +18,16 @@ from awin.adapters import (
     ThsCliHotConceptAdapter,
     ThsConceptAdapter,
     ThsMarketOverviewAdapter,
+    TsDailyBasicAdapter,
+    TsFinaIndicatorAdapter,
+    TsIndexMemberAllAdapter,
+    TsMoneyflowCntThsAdapter,
+    TsMoneyflowDcAdapter,
+    TsMoneyflowIndThsAdapter,
+    TsMoneyflowMktDcAdapter,
+    TsMoneyflowThsAdapter,
+    TsStockBasicAdapter,
+    TsStyleDailyMetricsAdapter,
 )
 from awin.analysis import StockFact, build_stock_facts
 from awin.alerting.diff import build_alert_output
@@ -24,13 +36,17 @@ from awin.market_understanding import compute_market_understanding
 from awin.opportunity_discovery import PreviousBullState, compute_opportunity_discovery
 from awin.risk_surveillance import compute_risk_surveillance
 from awin.storage.db import connect_sqlite, init_db
+from awin.fund_flow_profile import FundFlowSnapshot, build_fund_flow_snapshot
+from awin.style_profile import StyleProfile, build_style_profiles, persist_style_profiles
 
 
 @dataclass(frozen=True)
 class M0BuildResult:
     bundle: M0SnapshotBundle
     stock_facts: list[StockFact]
-    source_health: dict[str, dict]
+    style_profiles: list[StyleProfile] = field(default_factory=list)
+    fund_flow_snapshot: FundFlowSnapshot | None = None
+    source_health: dict[str, dict] = field(default_factory=dict)
 
 
 def build_run_id(trade_date: str, snapshot_time: str, round_seq: int) -> str:
@@ -48,6 +64,24 @@ def build_run_context(trade_date: str, snapshot_time: str, round_seq: int) -> Ru
     )
 
 
+def _run_parallel_loaders(
+    loaders: dict[str, Callable[[], object]],
+    *,
+    max_workers: int = 4,
+) -> dict[str, object]:
+    if not loaders:
+        return {}
+
+    worker_count = max(1, min(len(loaders), max_workers))
+    completed_results: dict[str, object] = {}
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        future_map = {executor.submit(loader): name for name, loader in loaders.items()}
+        for future in as_completed(future_map):
+            name = future_map[future]
+            completed_results[name] = future.result()
+    return {name: completed_results[name] for name in loaders}
+
+
 def build_m0_snapshot_bundle(
     request: SnapshotRequest,
     *,
@@ -63,35 +97,112 @@ def build_m0_snapshot_bundle(
     ths_cli_hot_adapter = ThsCliHotConceptAdapter()
     research_adapter = ResearchCoverageAdapter()
     qmt_ashare_snapshot_5m_adapter = QmtAshareSnapshot5mAdapter()
-    qmt_bar_1d_adapter = QmtBar1dAdapter()
+    qmt_bar_1d_metrics_adapter = QmtBar1dMetricsAdapter()
     dcf_hq_zj_snapshot_adapter = DcfHqZjSnapshotAdapter()
     market_overview_adapter = ThsMarketOverviewAdapter()
+    ts_stock_basic_adapter = TsStockBasicAdapter()
+    ts_daily_basic_adapter = TsDailyBasicAdapter()
+    ts_index_member_all_adapter = TsIndexMemberAllAdapter()
+    ts_style_daily_metrics_adapter = TsStyleDailyMetricsAdapter()
+    ts_fina_indicator_adapter = TsFinaIndicatorAdapter()
+    ts_moneyflow_ths_adapter = TsMoneyflowThsAdapter()
+    ts_moneyflow_dc_adapter = TsMoneyflowDcAdapter()
+    ts_moneyflow_cnt_ths_adapter = TsMoneyflowCntThsAdapter()
+    ts_moneyflow_ind_ths_adapter = TsMoneyflowIndThsAdapter()
+    ts_moneyflow_mkt_dc_adapter = TsMoneyflowMktDcAdapter()
 
     stock_master = stock_master_adapter.load_rows()
     ths_concepts = ths_adapter.load_rows(request)
     ths_hot_concepts = ths_app_hot_adapter.load_rows(request) + ths_cli_hot_adapter.load_rows(request)
     research = research_adapter.load_rows(request)
     qmt_rows = qmt_ashare_snapshot_5m_adapter.load_rows(request)
-    trade_day = date.fromisoformat(request.trade_date)
-    qmt_bar_1d_rows, qmt_bar_1d_health = qmt_bar_1d_adapter.load_rows_with_health(
-        [item.symbol for item in qmt_rows],
-        start_date=(trade_day - timedelta(days=45)).isoformat(),
-        end_date=request.trade_date,
-    )
     dcf_rows, dcf_health = dcf_hq_zj_snapshot_adapter.load_rows_with_health(request)
     market_tape = market_overview_adapter.load_market_tape()
-
-    market = compute_market_understanding(
-        stock_master,
-        qmt_rows,
-        dcf_rows,
-        ths_concepts,
-        ths_hot_concepts=ths_hot_concepts,
-        market_tape=market_tape,
+    ts_stock_basic_rows, ts_stock_basic_health = ts_stock_basic_adapter.load_rows_with_health()
+    ts_daily_basic_rows, ts_daily_basic_health = ts_daily_basic_adapter.load_rows_with_health(request.trade_date)
+    ts_index_member_all_rows, ts_index_member_all_health = ts_index_member_all_adapter.load_rows_with_health(request.trade_date)
+    ts_style_daily_metric_rows, ts_style_daily_metrics_health = ts_style_daily_metrics_adapter.load_rows_with_health(
+        request.trade_date
     )
-    stock_facts = build_stock_facts(stock_master, qmt_rows, dcf_rows, qmt_bar_1d_rows, ths_concepts, research)
-    opportunity = compute_opportunity_discovery(stock_facts, market, previous_state=previous_bull_state)
-    risk = compute_risk_surveillance(stock_facts, market)
+    ts_fina_indicator_rows, ts_fina_indicator_health = ts_fina_indicator_adapter.load_rows_with_health(request.trade_date)
+    ts_moneyflow_ths_rows, ts_moneyflow_ths_health = ts_moneyflow_ths_adapter.load_rows_with_health(request.trade_date)
+    ts_moneyflow_dc_rows, ts_moneyflow_dc_health = ts_moneyflow_dc_adapter.load_rows_with_health(request.trade_date)
+    ts_moneyflow_cnt_ths_rows, ts_moneyflow_cnt_ths_health = ts_moneyflow_cnt_ths_adapter.load_rows_with_health(request.trade_date)
+    ts_moneyflow_ind_ths_rows, ts_moneyflow_ind_ths_health = ts_moneyflow_ind_ths_adapter.load_rows_with_health(request.trade_date)
+    ts_moneyflow_mkt_dc_rows, ts_moneyflow_mkt_dc_health = ts_moneyflow_mkt_dc_adapter.load_rows_with_health(request.trade_date)
+
+    trade_day = date.fromisoformat(request.trade_date)
+    derived_results = _run_parallel_loaders(
+        {
+            "qmt_bar_1d_metrics": lambda: qmt_bar_1d_metrics_adapter.load_rows_with_health(
+                [item.symbol for item in qmt_rows],
+                start_date=(trade_day - timedelta(days=45)).isoformat(),
+                trade_date=request.trade_date,
+            ),
+            "style_profiles": lambda: build_style_profiles(
+                ts_stock_basic_rows,
+                ts_daily_basic_rows,
+                ts_index_member_all_rows,
+                daily_metric_rows=ts_style_daily_metric_rows,
+                fina_indicator_rows=ts_fina_indicator_rows,
+                trade_date=request.trade_date.replace("-", ""),
+            ),
+            "fund_flow_snapshot": lambda: build_fund_flow_snapshot(
+                ts_moneyflow_ths_rows,
+                ts_moneyflow_dc_rows,
+                ts_moneyflow_cnt_ths_rows,
+                ts_moneyflow_ind_ths_rows,
+                ts_moneyflow_mkt_dc_rows,
+            ),
+        }
+    )
+
+    qmt_bar_1d_metric_rows, qmt_bar_1d_metrics_health = derived_results["qmt_bar_1d_metrics"]
+    style_profiles = derived_results["style_profiles"]
+    fund_flow_snapshot = derived_results["fund_flow_snapshot"]
+    style_profile_rows = [item.to_dict() for item in style_profiles]
+
+    analysis_results = _run_parallel_loaders(
+        {
+            "market_understanding": lambda: compute_market_understanding(
+                stock_master,
+                qmt_rows,
+                dcf_rows,
+                ths_concepts,
+                ths_hot_concepts=ths_hot_concepts,
+                market_tape=market_tape,
+                style_profiles=style_profile_rows,
+                fund_flow_snapshot=fund_flow_snapshot,
+            ),
+            "stock_facts": lambda: build_stock_facts(
+                stock_master,
+                qmt_rows,
+                dcf_rows,
+                [],
+                ths_concepts,
+                research,
+                qmt_bar_metrics=qmt_bar_1d_metric_rows,
+                style_profiles=style_profile_rows,
+                fund_flow_snapshot=fund_flow_snapshot,
+            ),
+        }
+    )
+
+    market = analysis_results["market_understanding"]
+    stock_facts = analysis_results["stock_facts"]
+
+    decision_results = _run_parallel_loaders(
+        {
+            "opportunity_discovery": lambda: compute_opportunity_discovery(
+                stock_facts,
+                market,
+                previous_state=previous_bull_state,
+            ),
+            "risk_surveillance": lambda: compute_risk_surveillance(stock_facts, market),
+        }
+    )
+    opportunity = decision_results["opportunity_discovery"]
+    risk = decision_results["risk_surveillance"]
     alert_output = build_alert_output(run_context, market, opportunity, risk, previous_material=previous_material)
 
     bundle = M0SnapshotBundle(
@@ -104,6 +215,8 @@ def build_m0_snapshot_bundle(
     return M0BuildResult(
         bundle=bundle,
         stock_facts=stock_facts,
+        style_profiles=style_profiles,
+        fund_flow_snapshot=fund_flow_snapshot,
         source_health={
             "stock_master": stock_master_adapter.health().to_dict(),
             "ths_concepts": ths_adapter.health().to_dict(),
@@ -111,9 +224,19 @@ def build_m0_snapshot_bundle(
             "ths_cli_hot_concept": ths_cli_hot_adapter.health().to_dict(),
             "research": research_adapter.health().to_dict(),
             "qmt_ashare_snapshot_5m": qmt_ashare_snapshot_5m_adapter.health().to_dict(),
-            "qmt_bar_1d": qmt_bar_1d_health.to_dict(),
+            "qmt_bar_1d_metrics": qmt_bar_1d_metrics_health.to_dict(),
             "dcf_hq_zj_snapshot": dcf_health.to_dict(),
             "ths_market_overview": market_overview_adapter.health().to_dict(),
+            "ts_stock_basic": ts_stock_basic_health.to_dict(),
+            "ts_daily_basic": ts_daily_basic_health.to_dict(),
+            "ts_index_member_all": ts_index_member_all_health.to_dict(),
+            "ts_style_daily_metrics": ts_style_daily_metrics_health.to_dict(),
+            "ts_fina_indicator": ts_fina_indicator_health.to_dict(),
+            "ts_moneyflow_ths": ts_moneyflow_ths_health.to_dict(),
+            "ts_moneyflow_dc": ts_moneyflow_dc_health.to_dict(),
+            "ts_moneyflow_cnt_ths": ts_moneyflow_cnt_ths_health.to_dict(),
+            "ts_moneyflow_ind_ths": ts_moneyflow_ind_ths_health.to_dict(),
+            "ts_moneyflow_mkt_dc": ts_moneyflow_mkt_dc_health.to_dict(),
         },
     )
 
@@ -307,6 +430,7 @@ def load_previous_bull_state_history(
 
 def persist_m0_snapshot_bundle(db_path: Path, build_result: M0BuildResult) -> None:
     init_db(db_path)
+    persist_style_profiles(db_path, build_result.style_profiles)
     bundle = build_result.bundle
     run_context = bundle.run_context
     market = bundle.market_understanding
@@ -508,6 +632,23 @@ def persist_m0_snapshot_bundle(db_path: Path, build_result: M0BuildResult) -> No
                     ret_5d,
                     ret_10d,
                     ret_20d,
+                    dividend_value_score,
+                    quality_growth_score,
+                    high_beta_attack_score,
+                    low_vol_defensive_score,
+                    dividend_style,
+                    valuation_style,
+                    growth_style,
+                    quality_style,
+                    volatility_style,
+                    ownership_style,
+                    capacity_bucket,
+                    composite_style_labels_json,
+                    main_net_amount_5d_sum,
+                    inflow_streak_days,
+                    outflow_streak_days,
+                    flow_acceleration_3d,
+                    price_flow_divergence_flag,
                     style_bucket,
                     best_meta_theme,
                     best_concept,
@@ -529,7 +670,7 @@ def persist_m0_snapshot_bundle(db_path: Path, build_result: M0BuildResult) -> No
                     is_short,
                     is_watchlist,
                     is_warning
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_context.run_id,
@@ -567,6 +708,23 @@ def persist_m0_snapshot_bundle(db_path: Path, build_result: M0BuildResult) -> No
                     fact.ret_5d,
                     fact.ret_10d,
                     fact.ret_20d,
+                    fact.dividend_value_score,
+                    fact.quality_growth_score,
+                    fact.high_beta_attack_score,
+                    fact.low_vol_defensive_score,
+                    fact.dividend_style,
+                    fact.valuation_style,
+                    fact.growth_style,
+                    fact.quality_style,
+                    fact.volatility_style,
+                    fact.ownership_style,
+                    fact.capacity_bucket,
+                    json.dumps(fact.composite_style_labels, ensure_ascii=False),
+                    fact.main_net_amount_5d_sum,
+                    fact.inflow_streak_days,
+                    fact.outflow_streak_days,
+                    fact.flow_acceleration_3d,
+                    1 if fact.price_flow_divergence_flag else 0,
                     market.confirmed_style,
                     stored_best_meta_theme,
                     stored_best_concept,

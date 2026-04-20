@@ -134,6 +134,23 @@ class PersistBundleTestCase(unittest.TestCase):
                 ret_5d=0.06,
                 ret_10d=0.08,
                 ret_20d=0.10,
+                dividend_value_score=0.2,
+                quality_growth_score=0.7,
+                high_beta_attack_score=0.8,
+                low_vol_defensive_score=0.1,
+                dividend_style="低股息",
+                valuation_style="高估值",
+                growth_style="高成长",
+                quality_style="高质量",
+                volatility_style="高弹性",
+                ownership_style="民企",
+                capacity_bucket="机构容量",
+                composite_style_labels=["科技成长", "高弹性进攻"],
+                main_net_amount_5d_sum=300_000_000.0,
+                inflow_streak_days=3,
+                outflow_streak_days=0,
+                flow_acceleration_3d=50_000_000.0,
+                price_flow_divergence_flag=False,
                 meta_themes=["AI算力"],
                 concepts=["算力租赁"],
                 style_names=["科技成长"],
@@ -154,7 +171,9 @@ class PersistBundleTestCase(unittest.TestCase):
             with connect_sqlite(db_path) as connection:
                 row = connection.execute(
                     """
-                    SELECT display_bucket, risk_tag, is_core_anchor, is_catchup, is_short, best_meta_theme, best_concept
+                    SELECT display_bucket, risk_tag, is_core_anchor, is_catchup, is_short, best_meta_theme, best_concept,
+                           quality_growth_score, high_beta_attack_score, dividend_style, valuation_style, growth_style,
+                           quality_style, volatility_style, capacity_bucket, main_net_amount_5d_sum, inflow_streak_days
                     FROM stock_snapshot
                     WHERE run_id = ? AND symbol = ?
                     """,
@@ -169,6 +188,16 @@ class PersistBundleTestCase(unittest.TestCase):
             self.assertEqual(row["is_short"], 1)
             self.assertEqual(row["best_meta_theme"], "AI算力")
             self.assertEqual(row["best_concept"], "算力租赁")
+            self.assertEqual(row["quality_growth_score"], 0.7)
+            self.assertEqual(row["high_beta_attack_score"], 0.8)
+            self.assertEqual(row["dividend_style"], "低股息")
+            self.assertEqual(row["valuation_style"], "高估值")
+            self.assertEqual(row["growth_style"], "高成长")
+            self.assertEqual(row["quality_style"], "高质量")
+            self.assertEqual(row["volatility_style"], "高弹性")
+            self.assertEqual(row["capacity_bucket"], "机构容量")
+            self.assertEqual(row["main_net_amount_5d_sum"], 300_000_000.0)
+            self.assertEqual(row["inflow_streak_days"], 3)
 
 
 if __name__ == "__main__":
