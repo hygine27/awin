@@ -11,7 +11,7 @@
    - 说明项目定位、边界、目标用户和第一阶段目标
 2. 系统架构
    - [`architecture.md`](/home/yh/.openclaw/workspace/projects/awin/docs/architecture.md)
-   - 说明模块关系、系统分层和项目结构
+   - 说明模块关系、系统分层、项目结构，以及“确定性数据面 + Agent 判断面”的分工
 3. 数据主字典
    - [`architecture/data-dictionary.md`](/home/yh/.openclaw/workspace/projects/awin/docs/architecture/data-dictionary.md)
    - 这是当前“数据从哪来、怎么变形、关键字段怎么被用”的主入口
