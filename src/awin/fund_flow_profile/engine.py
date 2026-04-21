@@ -76,6 +76,7 @@ class StockFundFlowProfile(SerializableDataclass):
 class ConceptFundFlowProfile(SerializableDataclass):
     concept_code: str
     concept_name: str
+    trade_date: str | None = None
     net_amount_1d: float | None = None
     net_amount_3d_sum: float | None = None
     net_amount_5d_sum: float | None = None
@@ -87,6 +88,7 @@ class ConceptFundFlowProfile(SerializableDataclass):
 class IndustryFundFlowProfile(SerializableDataclass):
     industry_code: str
     industry_name: str
+    trade_date: str | None = None
     net_amount_1d: float | None = None
     net_amount_3d_sum: float | None = None
     net_amount_5d_sum: float | None = None
@@ -234,6 +236,7 @@ def build_fund_flow_snapshot(
         ConceptFundFlowProfile(
             concept_code=code,
             concept_name=name,
+            trade_date=concept_latest_pct.get((code, name), ("", None))[0] or None,
             net_amount_1d=ordered_series[-1] if ordered_series else None,
             net_amount_3d_sum=_sum_tail(ordered_series, 3),
             net_amount_5d_sum=_sum_tail(ordered_series, 5),
@@ -259,6 +262,7 @@ def build_fund_flow_snapshot(
         IndustryFundFlowProfile(
             industry_code=code,
             industry_name=name,
+            trade_date=industry_latest_pct.get((code, name), ("", None))[0] or None,
             net_amount_1d=ordered_series[-1] if ordered_series else None,
             net_amount_3d_sum=_sum_tail(ordered_series, 3),
             net_amount_5d_sum=_sum_tail(ordered_series, 5),

@@ -35,15 +35,19 @@ class RunCycleArgs:
     floor_minutes: int
     db_path: Path
     dry_run: bool
+    show_notes: bool
 
 
 def parse_args() -> RunCycleArgs:
-    parser = argparse.ArgumentParser(description="Run one scheduled awin intraday cycle using the current local clock.")
+    parser = argparse.ArgumentParser(
+        description="Run one awin intraday cycle using an explicit slot or the latest available snapshot."
+    )
     parser.add_argument("--trade-date")
     parser.add_argument("--snapshot-time")
     parser.add_argument("--floor-minutes", type=int, default=5)
     parser.add_argument("--db-path", type=Path, default=get_app_config().sqlite_path)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--show-notes", action="store_true")
     parsed = parser.parse_args()
     return RunCycleArgs(
         trade_date=parsed.trade_date,
@@ -51,6 +55,7 @@ def parse_args() -> RunCycleArgs:
         floor_minutes=parsed.floor_minutes,
         db_path=parsed.db_path,
         dry_run=parsed.dry_run,
+        show_notes=parsed.show_notes,
     )
 
 
@@ -61,14 +66,58 @@ def _floor_clock(now: datetime, floor_minutes: int) -> datetime:
     return now.replace(minute=floored_minute, second=0, microsecond=0)
 
 
+def _lookup_latest_qmt_slot(trade_date: str | None) -> tuple[str, str] | None:
+    try:
+        import psycopg  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError("psycopg driver is not installed") from exc
+
+    config = get_app_config()
+    sql = """
+        select
+          trade_date::text as trade_date,
+          to_char(snapshot_time at time zone 'Asia/Shanghai', 'HH24:MI:SS') as snapshot_clock
+        from stg.qmt_ashare_snapshot_5m
+        {where_clause}
+        order by snapshot_time desc
+        limit 1
+    """
+    params: dict[str, str] = {}
+    where_clause = ""
+    if trade_date:
+        where_clause = "where trade_date = %(trade_date)s::date"
+        params["trade_date"] = trade_date
+
+    with psycopg.connect(
+        host=config.qt_db.host,
+        port=config.qt_db.port,
+        dbname=config.qt_db.dbname,
+        user=config.qt_db.user,
+        password=config.qt_db.password,
+    ) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(sql.format(where_clause=where_clause), params)
+            row = cursor.fetchone()
+
+    if row is None:
+        return None
+    return str(row[0]), str(row[1])
+
+
 def _resolve_slot(args: RunCycleArgs) -> tuple[str, str]:
     now = datetime.now(SH_TZ)
-    trade_date = args.trade_date or now.strftime("%Y-%m-%d")
     if args.snapshot_time:
+        trade_date = args.trade_date or now.strftime("%Y-%m-%d")
         snapshot_time = args.snapshot_time if len(args.snapshot_time) == 8 else f"{args.snapshot_time}:00"
         return trade_date, snapshot_time
-    slot = _floor_clock(now, args.floor_minutes)
-    return trade_date, slot.strftime("%H:%M:%S")
+
+    latest_slot = _lookup_latest_qmt_slot(args.trade_date)
+    if latest_slot is not None:
+        return latest_slot
+
+    if args.trade_date:
+        raise ValueError(f"no latest QMT snapshot found for trade_date={args.trade_date}")
+    raise ValueError("no latest QMT snapshot found in source database")
 
 
 def _resolve_round_seq(db_path: Path, trade_date: str, analysis_snapshot_ts: str) -> int:
@@ -130,14 +179,14 @@ def main() -> None:
 
     if args.dry_run:
         print(f"slot={trade_date}T{snapshot_time} round_seq={round_seq:02d} mode=dry-run")
-        print(render_intraday_summary(build_result))
+        print(render_intraday_summary(build_result, show_notes=args.show_notes))
         return
 
     persist_m0_snapshot_bundle(args.db_path, build_result)
     print(f"persisted awin run: {build_result.bundle.run_context.run_id}")
     print(f"slot: {trade_date}T{snapshot_time}")
     print(f"sqlite: {args.db_path}")
-    print(render_intraday_summary(build_result))
+    print(render_intraday_summary(build_result, show_notes=args.show_notes))
     print(
         "core={core} new_long={new_long} catchup={catchup} risk={risk} alert={decision}".format(
             core=len(build_result.bundle.opportunity_discovery.core_anchor_watchlist),

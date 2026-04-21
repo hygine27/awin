@@ -101,6 +101,64 @@
 - `NO_UPDATE`
 - alert diff
 
+## 2.1 M0 新增的 Agent 证据对象
+
+为避免 `awin` 退化成“规则引擎 + 文案润色器”，`M0` 当前开始补充两类结构化证据对象：
+
+### E. `market_evidence_bundle`
+
+至少覆盖：
+
+- `confirmed_style`
+- `latest_status`
+- `latest_dominant_style`
+- `market_regime`
+- `top_styles`
+- `top_meta_themes`
+- `strongest_concepts`
+- `acceleration_concepts`
+- `t1_market_fund`
+- `intraday_market_fund`
+- `theme_evidence`
+- `source_health`
+
+这层不是替代 `market_understanding`，而是给 agent 一个可继续推理、追问、质疑的市场证据底座。
+
+### F. `stock_evidence_bundle`
+
+至少覆盖：
+
+- `focus_stocks`
+
+其中每个 `focus_stock` 至少要有：
+
+- `symbol`
+- `stock_name`
+- `role`
+- `display_bucket`
+- `confidence_score`
+- `best_meta_theme`
+- `best_concept`
+- `theme_rank`
+- `concept_overlay_rank`
+- `reason`
+- `themes`
+- `style_names`
+- `composite_style_labels`
+- `pct_chg_prev_close`
+- `money_pace_ratio`
+- `volume_ratio`
+- `turnover_rate`
+- `main_net_inflow`
+- `main_net_amount_1d`
+- `main_net_amount_5d_sum`
+- `outflow_streak_days`
+- `price_flow_divergence_flag`
+- `research_coverage_score`
+- `candidate_metadata`
+
+这层的目标是：让 Agent 不需要回头扫原始数据库，也不只拿一句候选摘要，而是直接拿到面向“为什么该做/不该做”的个股证据对象。
+
 ## 3. M0 聚合结果
 
 M0 每轮运行的统一聚合结果应该至少包含：
@@ -110,6 +168,8 @@ M0 每轮运行的统一聚合结果应该至少包含：
 3. `opportunity_discovery`
 4. `risk_surveillance`
 5. `alert_output`
+6. `market_evidence_bundle`
+7. `stock_evidence_bundle`
 
 后续 markdown note、daily brief、SQLite state summary、replay timeline 都应该从这份统一结果派生，而不是各模块各写一套。
 

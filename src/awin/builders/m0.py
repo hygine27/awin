@@ -30,7 +30,17 @@ from awin.adapters import (
 )
 from awin.analysis import StockFact, build_stock_facts
 from awin.alerting.diff import build_alert_output
-from awin.contracts.m0 import AlertMaterial, CandidateItem, M0SnapshotBundle, RunContext
+from awin.contracts.m0 import (
+    AlertMaterial,
+    CandidateItem,
+    M0SnapshotBundle,
+    MarketEvidenceBundle,
+    MarketFundEvidence,
+    RunContext,
+    StockEvidenceBundle,
+    StockEvidenceItem,
+    ThemeEvidenceItem,
+)
 from awin.market_understanding import compute_market_understanding
 from awin.opportunity_discovery import PreviousBullState, compute_opportunity_discovery
 from awin.risk_surveillance import compute_risk_surveillance
@@ -46,6 +56,383 @@ class M0BuildResult:
     style_profiles: list[StyleProfile] = field(default_factory=list)
     fund_flow_snapshot: FundFlowSnapshot | None = None
     source_health: dict[str, dict] = field(default_factory=dict)
+
+
+def _safe_ratio(numerator: float | int | None, denominator: float | int | None) -> float | None:
+    if numerator is None or denominator in {None, 0, 0.0}:
+        return None
+    return float(numerator) / float(denominator)
+
+
+def _average(values: list[float | None]) -> float | None:
+    valid = [float(value) for value in values if value is not None]
+    if not valid:
+        return None
+    return sum(valid) / len(valid)
+
+
+def _sum_or_none(values: list[float | None]) -> float | None:
+    valid = [float(value) for value in values if value is not None]
+    if not valid:
+        return None
+    return sum(valid)
+
+
+def _theme_rank_map(market) -> dict[str, int]:
+    mapping = {str(item.meta_theme): int(item.rank or 99) for item in market.top_meta_themes if str(item.meta_theme).strip()}
+    if mapping:
+        return mapping
+    return {
+        str(item.meta_theme): idx
+        for idx, item in enumerate(market.top_meta_themes, start=1)
+        if str(item.meta_theme).strip()
+    }
+
+
+def _theme_primary_concepts_map(market) -> dict[str, set[str]]:
+    mapping: dict[str, set[str]] = {}
+    for item in market.top_meta_themes:
+        theme = str(item.meta_theme or "").strip()
+        if not theme:
+            continue
+        mapping[theme] = {str(concept).strip() for concept in item.strongest_concepts if str(concept).strip()}
+    return mapping
+
+
+def _primary_theme_for_fact(
+    fact: StockFact,
+    *,
+    theme_rank_map: dict[str, int],
+    primary_concepts_map: dict[str, set[str]],
+) -> str | None:
+    if not fact.meta_themes:
+        return fact.best_meta_theme
+
+    best_theme: str | None = None
+    best_support = -1
+    best_rank = 999
+    for theme in fact.meta_themes:
+        theme_name = str(theme or "").strip()
+        if not theme_name:
+            continue
+        primary_concepts = primary_concepts_map.get(theme_name, set())
+        support = sum(1 for concept in fact.concepts if concept in primary_concepts)
+        rank = int(theme_rank_map.get(theme_name, 99) or 99)
+        if support > best_support or (support == best_support and rank < best_rank):
+            best_theme = theme_name
+            best_support = support
+            best_rank = rank
+
+    return best_theme or fact.best_meta_theme
+
+
+def _build_primary_theme_groups(stock_facts: list[StockFact], market) -> dict[str, list[StockFact]]:
+    theme_rank_map = _theme_rank_map(market)
+    primary_concepts_map = _theme_primary_concepts_map(market)
+    grouped: dict[str, list[StockFact]] = {}
+    for fact in stock_facts:
+        primary_theme = _primary_theme_for_fact(
+            fact,
+            theme_rank_map=theme_rank_map,
+            primary_concepts_map=primary_concepts_map,
+        )
+        if not primary_theme:
+            continue
+        grouped.setdefault(primary_theme, []).append(fact)
+    return grouped
+
+
+MORNING_SESSION_START_MINUTE = 9 * 60 + 30
+MORNING_SESSION_FIRST_SLOT_MINUTE = 9 * 60 + 35
+MORNING_SESSION_END_MINUTE = 11 * 60 + 30
+AFTERNOON_SESSION_START_MINUTE = 13 * 60
+AFTERNOON_SESSION_FIRST_SLOT_MINUTE = 13 * 60 + 5
+AFTERNOON_SESSION_END_MINUTE = 15 * 60
+THEME_FLOW_WINDOW_MINUTES = 15
+
+
+def _clock_to_minutes(clock_text: str | None) -> int | None:
+    text = str(clock_text or "").strip()
+    if not text:
+        return None
+    parts = text.split(":")
+    if len(parts) < 2:
+        return None
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1])
+    except ValueError:
+        return None
+    return hour * 60 + minute
+
+
+def _minutes_to_clock(total_minutes: int) -> str:
+    hour = max(0, total_minutes // 60)
+    minute = max(0, total_minutes % 60)
+    return f"{hour:02d}:{minute:02d}:00"
+
+
+def _theme_flow_comparison_request(request: SnapshotRequest) -> tuple[str | None, SnapshotRequest | None]:
+    clock_minutes = _clock_to_minutes(request.snapshot_time)
+    if clock_minutes is None:
+        return None, None
+
+    if MORNING_SESSION_START_MINUTE < clock_minutes <= MORNING_SESSION_END_MINUTE:
+        target_minutes = clock_minutes - THEME_FLOW_WINDOW_MINUTES
+        if target_minutes >= MORNING_SESSION_FIRST_SLOT_MINUTE:
+            snapshot_time = _minutes_to_clock(target_minutes)
+            return (
+                f"近{THEME_FLOW_WINDOW_MINUTES}分钟",
+                SnapshotRequest(
+                    trade_date=request.trade_date,
+                    snapshot_time=snapshot_time,
+                    analysis_snapshot_ts=f"{request.trade_date}T{snapshot_time}",
+                ),
+            )
+        return None, None
+
+    if AFTERNOON_SESSION_START_MINUTE < clock_minutes <= AFTERNOON_SESSION_END_MINUTE:
+        target_minutes = clock_minutes - THEME_FLOW_WINDOW_MINUTES
+        if target_minutes >= AFTERNOON_SESSION_FIRST_SLOT_MINUTE:
+            snapshot_time = _minutes_to_clock(target_minutes)
+            return (
+                f"近{THEME_FLOW_WINDOW_MINUTES}分钟",
+                SnapshotRequest(
+                    trade_date=request.trade_date,
+                    snapshot_time=snapshot_time,
+                    analysis_snapshot_ts=f"{request.trade_date}T{snapshot_time}",
+                ),
+            )
+
+        snapshot_time = _minutes_to_clock(MORNING_SESSION_END_MINUTE)
+        return (
+            "午后以来",
+            SnapshotRequest(
+                trade_date=request.trade_date,
+                snapshot_time=snapshot_time,
+                analysis_snapshot_ts=f"{request.trade_date}T{snapshot_time}",
+            ),
+        )
+
+    return None, None
+
+
+def _build_t1_market_fund_evidence(fund_flow_snapshot: FundFlowSnapshot | None) -> MarketFundEvidence | None:
+    market_flow = fund_flow_snapshot.market_profile if fund_flow_snapshot is not None else None
+    if market_flow is None or market_flow.net_amount_1d is None:
+        return None
+    return MarketFundEvidence(
+        scope="t1_market",
+        asof=market_flow.trade_date,
+        net_amount=market_flow.net_amount_1d,
+        net_amount_rate=market_flow.net_amount_rate_1d,
+        super_large_net=market_flow.super_large_net_1d,
+        large_order_net=market_flow.large_order_net_1d,
+        inflow_streak_days=market_flow.inflow_streak_days,
+        outflow_streak_days=market_flow.outflow_streak_days,
+    )
+
+
+def _build_intraday_market_fund_evidence(stock_facts: list[StockFact], run_context: RunContext) -> MarketFundEvidence | None:
+    amount_sum = _sum_or_none([item.amount for item in stock_facts])
+    main_flow_sum = _sum_or_none([item.main_net_inflow for item in stock_facts])
+    if amount_sum is None and main_flow_sum is None:
+        return None
+    flow_covered = [item for item in stock_facts if item.main_net_inflow is not None]
+    positive_flow_count = sum(1 for item in flow_covered if float(item.main_net_inflow or 0.0) > 0)
+    positive_stock_count = sum(1 for item in stock_facts if item.pct_chg_prev_close is not None and float(item.pct_chg_prev_close) > 0)
+    return MarketFundEvidence(
+        scope="intraday_market",
+        asof=run_context.analysis_snapshot_ts,
+        net_amount=main_flow_sum,
+        net_amount_rate=_safe_ratio(main_flow_sum, amount_sum),
+        super_large_net=_sum_or_none([item.super_net for item in stock_facts]),
+        large_order_net=_sum_or_none([item.large_net for item in stock_facts]),
+        positive_stock_ratio=_safe_ratio(positive_stock_count, len(stock_facts)),
+        positive_main_flow_ratio=_safe_ratio(positive_flow_count, len(flow_covered)),
+    )
+
+
+def _leader_stocks_for_theme(theme_members: list[StockFact]) -> list[str]:
+    members = list(theme_members)
+    members.sort(
+        key=lambda item: (
+            float(item.pct_chg_prev_close) if item.pct_chg_prev_close is not None else -999.0,
+            float(item.amount) if item.amount is not None else 0.0,
+        ),
+        reverse=True,
+    )
+    return [f"{item.stock_name}({item.symbol})" for item in members[:3]]
+
+
+def _build_theme_evidence_items(
+    stock_facts: list[StockFact],
+    market,
+    fund_flow_snapshot: FundFlowSnapshot | None,
+    *,
+    comparison_window_label: str | None = None,
+    prior_main_net_inflow_by_symbol: dict[str, float] | None = None,
+) -> list[ThemeEvidenceItem]:
+    concept_flow_map = {
+        item.concept_name: item
+        for item in (fund_flow_snapshot.concept_profiles if fund_flow_snapshot is not None else [])
+        if str(item.concept_name).strip()
+    }
+    primary_theme_groups = _build_primary_theme_groups(stock_facts, market)
+    items: list[ThemeEvidenceItem] = []
+    for theme in market.top_meta_themes[:5]:
+        members = primary_theme_groups.get(str(theme.meta_theme), [])
+        flow_covered = [item for item in members if item.main_net_inflow is not None]
+        flow_strength_covered = [
+            item for item in members if item.main_net_inflow is not None and item.amount not in {None, 0, 0.0}
+        ]
+        positive_flow_count = sum(1 for item in flow_covered if float(item.main_net_inflow or 0.0) > 0)
+        positive_stock_count = sum(1 for item in members if item.pct_chg_prev_close is not None and float(item.pct_chg_prev_close) > 0)
+        comparable_members = [
+            item
+            for item in members
+            if item.main_net_inflow is not None
+            and prior_main_net_inflow_by_symbol is not None
+            and item.symbol in prior_main_net_inflow_by_symbol
+        ]
+        comparison_main_net_inflow_delta = None
+        if comparable_members:
+            current_sum = _sum_or_none([item.main_net_inflow for item in comparable_members])
+            prior_sum = _sum_or_none([prior_main_net_inflow_by_symbol.get(item.symbol) for item in comparable_members])
+            if current_sum is not None and prior_sum is not None:
+                comparison_main_net_inflow_delta = current_sum - prior_sum
+        concept_flow_1d_map = {
+            concept_name: float(concept_flow_map[concept_name].net_amount_1d)
+            for concept_name in theme.strongest_concepts[:3]
+            if concept_name in concept_flow_map and concept_flow_map[concept_name].net_amount_1d is not None
+        }
+        items.append(
+            ThemeEvidenceItem(
+                meta_theme=theme.meta_theme,
+                rank=theme.rank,
+                stock_count=len(members),
+                avg_pct_chg_prev_close=_average([item.pct_chg_prev_close for item in members]),
+                positive_stock_ratio=_safe_ratio(positive_stock_count, len(members)),
+                current_main_net_inflow_sum=_sum_or_none([item.main_net_inflow for item in members]),
+                current_main_flow_rate=_safe_ratio(
+                    _sum_or_none([item.main_net_inflow for item in flow_strength_covered]),
+                    _sum_or_none([item.amount for item in flow_strength_covered]),
+                ),
+                current_positive_main_flow_ratio=_safe_ratio(positive_flow_count, len(flow_covered)),
+                comparison_window_label=comparison_window_label if comparison_main_net_inflow_delta is not None else None,
+                comparison_main_net_inflow_delta=comparison_main_net_inflow_delta,
+                strongest_concepts=list(theme.strongest_concepts[:3]),
+                strongest_concept_flow_1d_map=concept_flow_1d_map,
+                leader_stocks=_leader_stocks_for_theme(members),
+            )
+        )
+    return items
+
+
+def _merge_candidate_items(opportunity, risk) -> list[CandidateItem]:
+    merged: list[CandidateItem] = []
+    seen_symbols: set[str] = set()
+    for items in (
+        opportunity.core_anchor_watchlist,
+        opportunity.new_long_watchlist,
+        opportunity.catchup_watchlist,
+        risk.short_watchlist,
+    ):
+        for item in items:
+            if item.symbol in seen_symbols:
+                continue
+            seen_symbols.add(item.symbol)
+            merged.append(item)
+    return merged
+
+
+def _stock_role(item: CandidateItem) -> str:
+    if item.risk_tag:
+        return str(item.risk_tag)
+    return str(item.display_bucket)
+
+
+def _build_stock_evidence_bundle(stock_facts: list[StockFact], market, opportunity, risk) -> StockEvidenceBundle:
+    fact_by_symbol = {item.symbol: item for item in stock_facts}
+    focus_stocks: list[StockEvidenceItem] = []
+    for item in _merge_candidate_items(opportunity, risk):
+        fact = fact_by_symbol.get(item.symbol)
+        if fact is None:
+            continue
+        focus_stocks.append(
+            StockEvidenceItem(
+                symbol=item.symbol,
+                stock_name=item.stock_name,
+                role=_stock_role(item),
+                display_bucket=item.display_bucket,
+                confidence_score=float(item.confidence_score),
+                best_meta_theme=item.best_meta_theme or fact.best_meta_theme,
+                best_concept=item.best_concept or fact.best_concept,
+                theme_rank=market.meta_theme_rank_map.get(item.best_meta_theme or fact.best_meta_theme or ""),
+                concept_overlay_rank=market.concept_overlay_rank_map.get(item.best_concept or fact.best_concept or ""),
+                risk_tag=item.risk_tag,
+                reason=item.reason,
+                themes=list(item.themes or fact.meta_themes[:3]),
+                style_names=list(fact.style_names),
+                composite_style_labels=list(fact.composite_style_labels),
+                pct_chg_prev_close=fact.pct_chg_prev_close,
+                open_ret=fact.open_ret,
+                range_position=fact.range_position,
+                amount=fact.amount,
+                money_pace_ratio=fact.money_pace_ratio,
+                volume_ratio=fact.volume_ratio,
+                turnover_rate=fact.turnover_rate,
+                amplitude=fact.amplitude,
+                main_net_inflow=fact.main_net_inflow,
+                super_net=fact.super_net,
+                large_net=fact.large_net,
+                ret_3d=fact.ret_3d,
+                ret_10d=fact.ret_10d,
+                ret_20d=fact.ret_20d,
+                main_net_amount_1d=fact.main_net_amount_1d,
+                main_net_amount_5d_sum=fact.main_net_amount_5d_sum,
+                outflow_streak_days=int(fact.outflow_streak_days or 0),
+                price_flow_divergence_flag=bool(fact.price_flow_divergence_flag),
+                research_coverage_score=float(fact.research_coverage_score or 0.0),
+                research_hooks=list(item.research_hooks or fact.research_hooks),
+                candidate_metadata=dict(item.metadata or {}),
+            )
+        )
+    return StockEvidenceBundle(focus_stocks=focus_stocks)
+
+
+def _build_market_evidence_bundle(
+    run_context: RunContext,
+    market,
+    stock_facts: list[StockFact],
+    fund_flow_snapshot: FundFlowSnapshot | None,
+    source_health: dict[str, dict],
+    *,
+    comparison_window_label: str | None = None,
+    prior_main_net_inflow_by_symbol: dict[str, float] | None = None,
+) -> MarketEvidenceBundle:
+    return MarketEvidenceBundle(
+        confirmed_style=market.confirmed_style,
+        latest_status=market.latest_status,
+        latest_dominant_style=market.latest_dominant_style,
+        market_regime=market.market_regime,
+        summary_line=market.summary_line,
+        evidence_lines=list(market.evidence_lines),
+        top_styles=list(market.top_styles),
+        top_meta_themes=list(market.top_meta_themes),
+        strongest_concepts=list(market.strongest_concepts),
+        acceleration_concepts=list(market.acceleration_concepts),
+        t1_market_fund=_build_t1_market_fund_evidence(fund_flow_snapshot),
+        intraday_market_fund=_build_intraday_market_fund_evidence(stock_facts, run_context),
+        theme_evidence=_build_theme_evidence_items(
+            stock_facts,
+            market,
+            fund_flow_snapshot,
+            comparison_window_label=comparison_window_label,
+            prior_main_net_inflow_by_symbol=prior_main_net_inflow_by_symbol,
+        ),
+        source_health=source_health,
+    )
 
 
 def build_run_id(trade_date: str, snapshot_time: str, round_seq: int) -> str:
@@ -159,6 +546,15 @@ def build_m0_snapshot_bundle(
     style_profiles = derived_results["style_profiles"]
     fund_flow_snapshot = derived_results["fund_flow_snapshot"]
     style_profile_rows = [item.to_dict() for item in style_profiles]
+    comparison_window_label, comparison_request = _theme_flow_comparison_request(request)
+    prior_main_net_inflow_by_symbol: dict[str, float] | None = None
+    if comparison_request is not None:
+        prior_dcf_rows, _ = dcf_hq_zj_snapshot_adapter.load_rows_with_health(comparison_request)
+        prior_main_net_inflow_by_symbol = {
+            str(item.symbol): float(item.main_net_inflow)
+            for item in prior_dcf_rows
+            if str(item.symbol).strip() and item.main_net_inflow is not None
+        }
 
     analysis_results = _run_parallel_loaders(
         {
@@ -202,6 +598,26 @@ def build_m0_snapshot_bundle(
     opportunity = decision_results["opportunity_discovery"]
     risk = decision_results["risk_surveillance"]
     alert_output = build_alert_output(run_context, market, opportunity, risk, previous_material=previous_material)
+    source_health = {
+        "stock_master": stock_master_adapter.health().to_dict(),
+        "ths_concepts": ths_adapter.health().to_dict(),
+        "ths_cli_hot_concept": ths_cli_hot_adapter.health().to_dict(),
+        "research": research_adapter.health().to_dict(),
+        "qmt_ashare_snapshot_5m": qmt_ashare_snapshot_5m_adapter.health().to_dict(),
+        "qmt_bar_1d_metrics": qmt_bar_1d_metrics_health.to_dict(),
+        "dcf_hq_zj_snapshot": dcf_health.to_dict(),
+        "ths_market_overview": market_overview_adapter.health().to_dict(),
+        "ts_stock_basic": ts_stock_basic_health.to_dict(),
+        "ts_daily_basic": ts_daily_basic_health.to_dict(),
+        "ts_index_member_all": ts_index_member_all_health.to_dict(),
+        "ts_style_daily_metrics": ts_style_daily_metrics_health.to_dict(),
+        "ts_fina_indicator": ts_fina_indicator_health.to_dict(),
+        "ts_moneyflow_ths": ts_moneyflow_ths_health.to_dict(),
+        "ts_moneyflow_dc": ts_moneyflow_dc_health.to_dict(),
+        "ts_moneyflow_cnt_ths": ts_moneyflow_cnt_ths_health.to_dict(),
+        "ts_moneyflow_ind_ths": ts_moneyflow_ind_ths_health.to_dict(),
+        "ts_moneyflow_mkt_dc": ts_moneyflow_mkt_dc_health.to_dict(),
+    }
 
     bundle = M0SnapshotBundle(
         run_context=run_context,
@@ -209,32 +625,23 @@ def build_m0_snapshot_bundle(
         opportunity_discovery=opportunity,
         risk_surveillance=risk,
         alert_output=alert_output,
+        market_evidence_bundle=_build_market_evidence_bundle(
+            run_context,
+            market,
+            stock_facts,
+            fund_flow_snapshot,
+            source_health,
+            comparison_window_label=comparison_window_label,
+            prior_main_net_inflow_by_symbol=prior_main_net_inflow_by_symbol,
+        ),
+        stock_evidence_bundle=_build_stock_evidence_bundle(stock_facts, market, opportunity, risk),
     )
     return M0BuildResult(
         bundle=bundle,
         stock_facts=stock_facts,
         style_profiles=style_profiles,
         fund_flow_snapshot=fund_flow_snapshot,
-        source_health={
-            "stock_master": stock_master_adapter.health().to_dict(),
-            "ths_concepts": ths_adapter.health().to_dict(),
-            "ths_cli_hot_concept": ths_cli_hot_adapter.health().to_dict(),
-            "research": research_adapter.health().to_dict(),
-            "qmt_ashare_snapshot_5m": qmt_ashare_snapshot_5m_adapter.health().to_dict(),
-            "qmt_bar_1d_metrics": qmt_bar_1d_metrics_health.to_dict(),
-            "dcf_hq_zj_snapshot": dcf_health.to_dict(),
-            "ths_market_overview": market_overview_adapter.health().to_dict(),
-            "ts_stock_basic": ts_stock_basic_health.to_dict(),
-            "ts_daily_basic": ts_daily_basic_health.to_dict(),
-            "ts_index_member_all": ts_index_member_all_health.to_dict(),
-            "ts_style_daily_metrics": ts_style_daily_metrics_health.to_dict(),
-            "ts_fina_indicator": ts_fina_indicator_health.to_dict(),
-            "ts_moneyflow_ths": ts_moneyflow_ths_health.to_dict(),
-            "ts_moneyflow_dc": ts_moneyflow_dc_health.to_dict(),
-            "ts_moneyflow_cnt_ths": ts_moneyflow_cnt_ths_health.to_dict(),
-            "ts_moneyflow_ind_ths": ts_moneyflow_ind_ths_health.to_dict(),
-            "ts_moneyflow_mkt_dc": ts_moneyflow_mkt_dc_health.to_dict(),
-        },
+        source_health=source_health,
     )
 
 

@@ -24,6 +24,7 @@ class RunOnceArgs:
     round_seq: int
     db_path: Path
     dry_run: bool
+    evidence_only: bool
 
 
 def _build_run_id(trade_date: str, snapshot_time: str, round_seq: int) -> str:
@@ -41,6 +42,7 @@ def parse_args() -> RunOnceArgs:
     parser.add_argument("--round-seq", type=int, default=1)
     parser.add_argument("--db-path", type=Path, default=config.sqlite_path)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--evidence-only", action="store_true")
     parsed = parser.parse_args()
 
     return RunOnceArgs(
@@ -49,6 +51,7 @@ def parse_args() -> RunOnceArgs:
         round_seq=parsed.round_seq,
         db_path=parsed.db_path,
         dry_run=parsed.dry_run,
+        evidence_only=parsed.evidence_only,
     )
 
 
@@ -128,7 +131,15 @@ def main() -> None:
     )
 
     if args.dry_run:
-        print(json.dumps(build_result.bundle.to_dict(), ensure_ascii=False, indent=2))
+        if args.evidence_only:
+            payload = {
+                "run_context": build_result.bundle.run_context.to_dict(),
+                "market_evidence_bundle": build_result.bundle.market_evidence_bundle.to_dict(),
+                "stock_evidence_bundle": build_result.bundle.stock_evidence_bundle.to_dict(),
+            }
+        else:
+            payload = build_result.bundle.to_dict()
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         persist_m0_snapshot_bundle(args.db_path, build_result)
         print(f"persisted awin run: {build_result.bundle.run_context.run_id}")

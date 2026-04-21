@@ -202,6 +202,12 @@ def _fmt_amount_from_wan_yuan(value: float | None) -> str:
     return f"{amount_wan:+.1f}万"
 
 
+def _fmt_amount_from_yi_raw(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{float(value):+.1f}亿"
+
+
 def _range_position(last_price: float | None, high_price: float | None, low_price: float | None) -> float | None:
     if last_price is None or high_price is None or low_price is None:
         return None
@@ -539,7 +545,7 @@ def compute_market_understanding(
             concept_members[concept_name].append(row)
 
     if not stock_rows:
-        return MarketUnderstandingOutput(summary_line="主风格：暂无｜状态：稳定｜主导方向：暂无")
+        return MarketUnderstandingOutput(summary_line="风格底色：暂无｜风格状态：稳定｜交易主线：暂无")
 
     style_rows: list[dict] = []
     for style_name, members in style_members.items():
@@ -781,14 +787,13 @@ def compute_market_understanding(
     acceleration_concepts = [item["concept_name"] for item in acceleration_candidates[:3]]
     top_meta_theme_names = [item.meta_theme for item in top_meta_themes[:3]]
     active_direction, active_direction_candidates, active_direction_mode = _resolve_active_direction(meta_rows)
-    direction_label = "活跃方向" if active_direction_mode == "mixed_rotation" or market_regime == "mixed_rotation" else "主导方向"
-    direction_value = (
+    trade_mainline_value = (
         " / ".join(active_direction_candidates[:3])
         if active_direction_mode == "mixed_rotation"
-        else (active_direction or (confirmed_style or "暂无"))
+        else " / ".join(top_meta_theme_names[:3]) if top_meta_theme_names else (active_direction or "暂无")
     )
     summary_line = (
-        f"主风格：{confirmed_style or '暂无'}｜状态：稳定｜{direction_label}：{direction_value}"
+        f"风格底色：{confirmed_style or '暂无'}｜风格状态：稳定｜交易主线：{trade_mainline_value}"
         f"｜最强主题：{' / '.join(top_meta_theme_names) if top_meta_theme_names else '暂无'}"
     )
 
@@ -812,15 +817,25 @@ def compute_market_understanding(
         concept_flow_map = {item.concept_name: item for item in fund_flow_snapshot.concept_profiles}
         theme = top_meta_themes[0]
         funded_concepts = []
+        funded_trade_dates: list[str] = []
         for concept_name in theme.strongest_concepts[:2]:
             concept_flow = concept_flow_map.get(concept_name)
             if concept_flow is None or concept_flow.net_amount_1d is None:
                 continue
+            if concept_flow.trade_date:
+                funded_trade_dates.append(str(concept_flow.trade_date))
             funded_concepts.append(
-                f"{concept_name} 近1日净流入 {_fmt_amount_from_wan_yuan(concept_flow.net_amount_1d)}"
+                f"{concept_name} 近1日净流入 {_fmt_amount_from_yi_raw(concept_flow.net_amount_1d)}"
             )
         if funded_concepts:
-            evidence_lines.append(f"- 主线资金：{'；'.join(funded_concepts)}。")
+            funded_trade_dates = sorted(set(funded_trade_dates))
+            if len(funded_trade_dates) == 1:
+                concept_flow_label = f"主线资金（THS概念日频，T-1 {funded_trade_dates[0]}，原表亿元口径）"
+            elif funded_trade_dates:
+                concept_flow_label = "主线资金（THS概念日频，最近可用交易日，原表亿元口径）"
+            else:
+                concept_flow_label = "主线资金（THS概念日频，T-1，原表亿元口径）"
+            evidence_lines.append(f"- {concept_flow_label}：{'；'.join(funded_concepts)}。")
     if acceleration_concepts:
         evidence_lines.append(f"- 加速方向：{' / '.join(acceleration_concepts)} 当前抬升最快。")
     if tape_regime:

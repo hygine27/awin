@@ -125,7 +125,8 @@ score_weights:
         self.assertTrue(output.top_meta_themes)
         self.assertIn("共封装光学(CPO)", output.strongest_concepts)
         self.assertIn("共封装光学(CPO)", output.acceleration_concepts)
-        self.assertIn("主风格", output.summary_line)
+        self.assertIn("风格底色", output.summary_line)
+        self.assertIn("交易主线", output.summary_line)
         self.assertTrue(output.evidence_lines)
 
     def test_compute_market_understanding_uses_active_directions_for_parallel_meta_themes(self) -> None:
@@ -208,7 +209,7 @@ score_weights:
 
         output = compute_market_understanding(stock_master, qmt_rows, dcf_rows, ths_rows, ths_hot_concepts=hot_rows)
 
-        self.assertIn("活跃方向", output.summary_line)
+        self.assertIn("交易主线", output.summary_line)
         self.assertIn(" / ", output.summary_line)
         self.assertTrue(any("活跃方向" in line for line in output.evidence_lines))
 
@@ -256,7 +257,8 @@ score_weights:
 
         joined = "\n".join(output.evidence_lines)
         self.assertIn("主线资金", joined)
-        self.assertIn("150.0万", joined)
+        self.assertIn("原表亿元口径", joined)
+        self.assertIn("+150.0亿", joined)
         self.assertIn("市场资金", joined)
 
     def test_compute_market_understanding_prefers_actionable_market_tape_regime(self) -> None:

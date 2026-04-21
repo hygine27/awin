@@ -31,6 +31,7 @@
 
 - 按明确的 `trade_date / snapshot_time / round_seq` 运行一轮
 - 可 `--dry-run`
+- 可 `--evidence-only`
 - 可指定 SQLite 输出路径
 
 适合：
@@ -38,6 +39,7 @@
 - 手工 review
 - 精确复现实验时点
 - 联调
+- 给 Agent 导出结构化证据对象
 
 ## 2. Runtime Diagnostics
 

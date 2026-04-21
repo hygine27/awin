@@ -9,11 +9,14 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from awin.adapters.base import DbBackedAdapter, SnapshotRequest
 from awin.adapters.contracts import SourceHealth, ThsHotConceptRow
 from awin.config import get_app_config
 from awin.utils.structured_config import load_structured_config
+
+SH_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _canonical_mapping(overlay_config_path: Path) -> tuple[set[str], dict[str, str]]:
@@ -94,8 +97,11 @@ class ThsCliHotConceptAdapter(DbBackedAdapter):
         config = get_app_config()
         super().__init__(db_config=config.fin_db, dsn_label="fin")
         self.overlay_config_path = overlay_config_path or config.ths_overlay_config_path
+        self._last_health: SourceHealth | None = None
 
     def health(self) -> SourceHealth:
+        if self._last_health is not None:
+            return self._last_health
         _, error = self._connect_with_error()
         if error is not None:
             return SourceHealth(source_name=self.source_name, source_status="missing", detail=error)
@@ -149,10 +155,20 @@ class ThsCliHotConceptAdapter(DbBackedAdapter):
 
     def load_rows(self, request: SnapshotRequest) -> list[ThsHotConceptRow]:
         if not self.overlay_config_path.exists():
+            self._last_health = SourceHealth(
+                source_name=self.source_name,
+                source_status="missing",
+                detail=f"missing file: {self.overlay_config_path}",
+            )
             return []
         sql, params = self.build_query(request)
         result = self._query_rows(sql, params)
         if result is None:
+            self._last_health = SourceHealth(
+                source_name=self.source_name,
+                source_status="missing",
+                detail="query_unavailable",
+            )
             return []
 
         whitelist, alias_to_canonical = _canonical_mapping(self.overlay_config_path)
@@ -176,4 +192,23 @@ class ThsCliHotConceptAdapter(DbBackedAdapter):
                     main_net_amount=_to_float(payload.get("main_net_amount")),
                 )
             )
+        freshness_seconds = None
+        if rows:
+            latest_batch_ts = max(datetime.fromisoformat(str(item.batch_ts)) for item in rows)
+            if latest_batch_ts.tzinfo is None:
+                latest_batch_ts = latest_batch_ts.replace(tzinfo=SH_TZ)
+            else:
+                latest_batch_ts = latest_batch_ts.astimezone(SH_TZ)
+            cutoff_ts = datetime.fromisoformat(request.analysis_snapshot_ts.replace("Z", "+00:00"))
+            if cutoff_ts.tzinfo is None:
+                cutoff_ts = cutoff_ts.replace(tzinfo=SH_TZ)
+            else:
+                cutoff_ts = cutoff_ts.astimezone(SH_TZ)
+            freshness_seconds = max(0, int(round((cutoff_ts - latest_batch_ts).total_seconds())))
+        self._last_health = SourceHealth(
+            source_name=self.source_name,
+            source_status="ready" if rows else "degraded",
+            freshness_seconds=freshness_seconds,
+            detail="ok" if rows else "no_ths_cli_hot_concept_rows",
+        )
         return rows

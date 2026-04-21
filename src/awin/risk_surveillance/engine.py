@@ -13,6 +13,8 @@ RISK_THRESHOLDS = RISK_RULES["thresholds"]
 RISK_WEIGHTS = RISK_RULES["weights"]
 RISK_QUOTA = RISK_RULES["quota"]
 OVERHEAT_RULES = RISK_RULES["overheat_rules"]
+OVERHEAT_POSITIVE_FLOW_SUPPORT_OFFSET = 0.25
+WEAKENING_SIGNAL_MIN_COUNT = 2
 
 
 def _theme_priority(market: MarketUnderstandingOutput) -> dict[str, float]:
@@ -114,6 +116,9 @@ def _build_candidate(
             "pct_chg_prev_close": fact.pct_chg_prev_close,
             "range_position": fact.range_position,
             "flow_ratio": fact.flow_ratio,
+            "main_net_inflow": fact.main_net_inflow,
+            "super_net": fact.super_net,
+            "large_net": fact.large_net,
             "ret_10d": fact.ret_10d,
             "ret_20d": fact.ret_20d,
             "amplitude": fact.amplitude,
@@ -127,6 +132,25 @@ def _build_candidate(
             "relative_to_theme": relative_to_theme,
         },
     )
+
+
+def _overheat_risk_tag(
+    *,
+    same_day_weak_signals: int,
+    main_net_inflow: float,
+    large_flow_net: float,
+    money_pace_ratio: float,
+    range_position: float,
+) -> str:
+    strong_support = (
+        main_net_inflow > 0
+        and large_flow_net > 0
+        and money_pace_ratio >= 1.2
+        and range_position >= 0.7
+    )
+    if strong_support and same_day_weak_signals == 0:
+        return "overheat_supported"
+    return "overheat_fading"
 
 
 def compute_risk_surveillance(
@@ -188,6 +212,17 @@ def compute_risk_surveillance(
         amplitude = float(fact.amplitude or 0.0)
         main_net_inflow = float(fact.main_net_inflow or 0.0)
         large_flow_net = float(fact.super_net or 0.0) + float(fact.large_net or 0.0)
+        same_day_weak_signals = 0
+        if main_net_inflow < 0:
+            same_day_weak_signals += 1
+        if large_flow_net < 0:
+            same_day_weak_signals += 1
+        if pct_from_open <= weak_from_open_threshold:
+            same_day_weak_signals += 1
+        if range_position <= float(overheat_entry_gates["warning_range_position_max"]):
+            same_day_weak_signals += 1
+        if fact.price_flow_divergence_flag:
+            same_day_weak_signals += 1
 
         overheat_regime = min(
             float(overheat_regime_rules["cap"]),
@@ -286,6 +321,14 @@ def compute_risk_surveillance(
             else 0.0
         )
         overheat_tape += float(overheat_tape_rules["divergence_bonus"]) if fact.price_flow_divergence_flag else 0.0
+        if (
+            main_net_inflow > 0
+            and large_flow_net > 0
+            and money_pace_ratio >= 1.2
+            and range_position >= 0.7
+        ):
+            overheat_tape -= OVERHEAT_POSITIVE_FLOW_SUPPORT_OFFSET
+        overheat_tape = max(0.0, overheat_tape)
         overheat_tape = min(float(overheat_tape_rules["cap"]), overheat_tape)
 
         overheat_persistence = 0.0
@@ -337,10 +380,23 @@ def compute_risk_surveillance(
             and (relative_to_theme or 0.0) >= overheat_relative_threshold
             and overheat_score >= float(RISK_THRESHOLDS["overheat_score_gate"])
         ):
-            reason = (
-                f"{theme_name or '热门主线'}内明显超涨，较主题均值偏离{_fmt_pct(relative_to_theme)}，"
-                f"短线透支和拥挤度抬升，更适合做过热管理"
+            overheat_tag = _overheat_risk_tag(
+                same_day_weak_signals=same_day_weak_signals,
+                main_net_inflow=main_net_inflow,
+                large_flow_net=large_flow_net,
+                money_pace_ratio=money_pace_ratio,
+                range_position=range_position,
             )
+            if overheat_tag == "overheat_supported":
+                reason = (
+                    f"{theme_name or '热门主线'}内明显超涨，较主题均值偏离{_fmt_pct(relative_to_theme)}，"
+                    f"短线透支抬升，但盘中承接仍强，更适合做过热管理"
+                )
+            else:
+                reason = (
+                    f"{theme_name or '热门主线'}内明显超涨，较主题均值偏离{_fmt_pct(relative_to_theme)}，"
+                    f"短线透支和拥挤度抬升，且盘中承接开始松动，更适合做过热管理"
+                )
             overheat_candidates.append(
                 (
                     overheat_score,
@@ -348,7 +404,7 @@ def compute_risk_surveillance(
                     _build_candidate(
                         fact,
                         score=overheat_score,
-                        risk_tag="overheat",
+                        risk_tag=overheat_tag,
                         reason=reason,
                         theme_name=theme_name,
                         relative_to_theme=relative_to_theme,
@@ -364,11 +420,12 @@ def compute_risk_surveillance(
             and range_position <= float(overheat_entry_gates["warning_range_position_max"])
             and (relative_to_theme or 0.0) <= weak_relative_threshold
             and flow_score <= float(overheat_entry_gates["warning_flow_score_max"])
+            and same_day_weak_signals >= WEAKENING_SIGNAL_MIN_COUNT
             and weakness_score >= float(RISK_THRESHOLDS["warning_score_gate"])
         ):
             reason = (
                 f"{theme_name or '热门主线'}内部分化，这只票相对主题落后{_fmt_pct(abs(relative_to_theme or 0.0))}，"
-                f"日内位置偏低，资金承接也偏弱，需要纳入 warning"
+                f"日内承接开始走弱，需要纳入转弱预警"
             )
             weak_candidates.append(
                 (
@@ -377,7 +434,7 @@ def compute_risk_surveillance(
                     _build_candidate(
                         fact,
                         score=weakness_score,
-                        risk_tag="warning",
+                        risk_tag="weakening",
                         reason=reason,
                         theme_name=theme_name,
                         relative_to_theme=relative_to_theme,
@@ -431,7 +488,9 @@ def compute_risk_surveillance(
         for _, _, item in bucket:
             if item.symbol in used_symbols:
                 continue
-            if bucket is overheat_candidates and sum(1 for candidate in picked if candidate.risk_tag == "overheat") >= quota:
+            if bucket is overheat_candidates and sum(
+                1 for candidate in picked if candidate.risk_tag in {"overheat", "overheat_supported", "overheat_fading"}
+            ) >= quota:
                 break
             if bucket is weak_candidates and len(picked) >= max(overheat_quota, min(risk_limit, len(overheat_candidates))):
                 break

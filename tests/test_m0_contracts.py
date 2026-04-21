@@ -69,6 +69,10 @@ class M0ContractsTestCase(unittest.TestCase):
             "300570.SZ",
         )
         self.assertEqual(payload["alert_output"]["diff_result"]["decision"], "NO_UPDATE")
+        self.assertIn("market_evidence_bundle", payload)
+        self.assertIn("stock_evidence_bundle", payload)
+        self.assertEqual(payload["market_evidence_bundle"]["confirmed_style"], None)
+        self.assertEqual(payload["stock_evidence_bundle"]["focus_stocks"], [])
 
 
 if __name__ == "__main__":

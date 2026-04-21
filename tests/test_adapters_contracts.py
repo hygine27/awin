@@ -20,6 +20,7 @@ from awin.adapters import (
     ResearchCoverageAdapter,
     SnapshotRequest,
     StockMasterAdapter,
+    ThsCliHotConceptAdapter,
     ThsConceptAdapter,
     TsMoneyflowCntThsAdapter,
     TsMoneyflowDcAdapter,
@@ -224,6 +225,94 @@ company_role: 龙头
         with patch.object(DcfHqZjSnapshotAdapter, "_connect_with_error", return_value=(object(), None)):
             with patch.object(DcfHqZjSnapshotAdapter, "_query_rows", return_value=None):
                 self.assertEqual(DcfHqZjSnapshotAdapter().load_rows(request), [])
+
+    def test_qmt_adapter_populates_dynamic_health_after_load(self) -> None:
+        adapter = QmtAshareSnapshot5mAdapter()
+        request = SnapshotRequest(
+            trade_date="2026-04-16",
+            snapshot_time="10:35:00",
+            analysis_snapshot_ts="2026-04-16T10:35:00",
+        )
+
+        with patch.object(
+            adapter,
+            "_query_rows",
+            side_effect=[
+                [
+                    {
+                        "symbol": "000001.SZ",
+                        "stock_code": "000001",
+                        "trade_date": "2026-04-16",
+                        "snapshot_time": "10:35:00",
+                        "last_price": 10.5,
+                        "last_close": 10.0,
+                        "open_price": 10.1,
+                        "high_price": 10.6,
+                        "low_price": 10.0,
+                        "volume": 1000,
+                        "amount": 1000000,
+                        "bid_price1": 10.49,
+                        "ask_price1": 10.51,
+                        "bid_volume1": 100,
+                        "ask_volume1": 120,
+                    }
+                ],
+                [{"total_codes": 2, "covered_codes": 1}],
+            ],
+        ):
+            rows = adapter.load_rows(request)
+
+        self.assertEqual(len(rows), 1)
+        health = adapter.health()
+        self.assertEqual(health.source_status, "ready")
+        self.assertEqual(health.freshness_seconds, 0)
+        self.assertEqual(health.coverage_ratio, 0.5)
+
+    def test_ths_cli_adapter_populates_freshness_after_load(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            overlay_config_path = Path(tmp_dir) / "overlay.json"
+            overlay_config_path.write_text(
+                json.dumps(
+                    {
+                        "concept_whitelist": ["共封装光学(CPO)"],
+                        "meta_themes": {"光通信_CPO": ["共封装光学(CPO)"]},
+                        "concept_aliases": {},
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            adapter = ThsCliHotConceptAdapter(overlay_config_path=overlay_config_path)
+            request = SnapshotRequest(
+                trade_date="2026-04-16",
+                snapshot_time="10:35:00",
+                analysis_snapshot_ts="2026-04-16T10:35:00",
+            )
+
+            with patch.object(
+                adapter,
+                "_query_rows",
+                return_value=[
+                    {
+                        "trade_date": "2026-04-16",
+                        "batch_ts": "2026-04-16 10:30:00",
+                        "concept_name": "共封装光学(CPO)",
+                        "change_pct": "2.5%",
+                        "speed_1min": "0.5%",
+                        "main_net_amount": "1.2亿",
+                        "limit_up_count": "3",
+                        "rising_count": "20",
+                        "falling_count": "5",
+                        "leading_stock": "太辰光",
+                    }
+                ],
+            ):
+                rows = adapter.load_rows(request)
+
+            self.assertEqual(len(rows), 1)
+            health = adapter.health()
+            self.assertEqual(health.source_status, "ready")
+            self.assertEqual(health.freshness_seconds, 300)
 
     def test_dcf_guard_marks_stale_or_low_coverage_as_degraded(self) -> None:
         adapter = DcfHqZjSnapshotAdapter(max_freshness_minutes=20.0, min_rows_abs=5000, min_completeness_ratio=0.92)

@@ -159,6 +159,21 @@ CREATE_TABLE_STATEMENTS = [
         PRIMARY KEY (trade_date, symbol)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS run_artifact (
+        artifact_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL,
+        artifact_name TEXT NOT NULL,
+        artifact_format TEXT NOT NULL,
+        content_level TEXT,
+        relative_path TEXT,
+        table_name TEXT,
+        row_count INTEGER,
+        byte_size INTEGER,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (run_id) REFERENCES monitor_run (run_id)
+    )
+    """,
 ]
 
 MIGRATION_ADD_COLUMNS = {
@@ -300,6 +315,17 @@ MIGRATION_ADD_COLUMNS = {
         "composite_style_labels_json TEXT",
         "created_at TEXT DEFAULT CURRENT_TIMESTAMP",
     ],
+    "run_artifact": [
+        "artifact_id INTEGER",
+        "artifact_name TEXT",
+        "artifact_format TEXT",
+        "content_level TEXT",
+        "relative_path TEXT",
+        "table_name TEXT",
+        "row_count INTEGER",
+        "byte_size INTEGER",
+        "created_at TEXT DEFAULT CURRENT_TIMESTAMP",
+    ],
 }
 
 INDEX_STATEMENTS = [
@@ -334,5 +360,13 @@ INDEX_STATEMENTS = [
     """
     CREATE INDEX IF NOT EXISTS idx_style_profile_trade_date
     ON style_profile (trade_date)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_run_artifact_run_id
+    ON run_artifact (run_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_run_artifact_name
+    ON run_artifact (artifact_name)
     """,
 ]

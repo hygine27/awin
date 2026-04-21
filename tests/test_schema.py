@@ -32,6 +32,7 @@ class SchemaTestCase(unittest.TestCase):
             self.assertIn("stock_snapshot", table_names)
             self.assertIn("alert_log", table_names)
             self.assertIn("style_profile", table_names)
+            self.assertIn("run_artifact", table_names)
 
     def test_write_monitor_run_inserts_one_row(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -42,6 +43,7 @@ class SchemaTestCase(unittest.TestCase):
                 round_seq=3,
                 db_path=db_path,
                 dry_run=False,
+                evidence_only=False,
             )
 
             run_id = write_monitor_run(args)
@@ -92,6 +94,10 @@ class SchemaTestCase(unittest.TestCase):
                     row["name"]
                     for row in connection.execute("PRAGMA table_info(style_profile)").fetchall()
                 }
+                artifact_columns = {
+                    row["name"]
+                    for row in connection.execute("PRAGMA table_info(run_artifact)").fetchall()
+                }
 
             self.assertIn("trade_date", monitor_columns)
             self.assertIn("coverage_ratio", monitor_columns)
@@ -116,6 +122,12 @@ class SchemaTestCase(unittest.TestCase):
             self.assertIn("quality_style", style_profile_columns)
             self.assertIn("volatility_style", style_profile_columns)
             self.assertIn("composite_style_labels_json", style_profile_columns)
+            self.assertIn("artifact_name", artifact_columns)
+            self.assertIn("artifact_format", artifact_columns)
+            self.assertIn("relative_path", artifact_columns)
+            self.assertIn("table_name", artifact_columns)
+            self.assertIn("row_count", artifact_columns)
+            self.assertIn("byte_size", artifact_columns)
 
 
 if __name__ == "__main__":

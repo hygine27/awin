@@ -461,7 +461,86 @@ compute_market_understanding()
       +--> evidence_lines
 ```
 
-## 7. Current Source of Truth
+## 7. Evidence Delivery Model
+
+这一节只回答一个问题：
+
+如果要把一轮盘中分析交给 agent 完整消费，到底应该提供哪些表，以及这些表各自解决什么问题。
+
+这里的原则是：
+
+- `evidence.db` 是单轮 canonical evidence base
+- `manifest.yaml` 是 artifact 索引
+- `*.md` 是 digest，不替代表格事实
+- `CSV` 只是便于抽样和外部工具读取
+
+### 7.1 Per-Run Artifact Layout
+
+```text
+data/runs/YYYY-MM-DD/<run_id>/
+├── manifest.yaml
+├── evidence.db
+├── market_brief.md
+├── analyst_output.md
+├── reviewer_output.md
+└── exports/
+    ├── focus_stocks.csv
+    └── style_ranking.csv
+```
+
+### 7.2 Evidence Tables
+
+下表按“run 级 -> market/theme 级 -> stock 全量级 -> focus stock 级”收口。
+
+| Table | 粒度 | 主要字段 | 预估行数/轮 | 用途 |
+|---|---|---|---:|---|
+| `run_context` | 一轮一行 | `run_id`, `trade_date`, `snapshot_time`, `analysis_snapshot_ts`, `market_regime`, `confirmed_style`, `latest_status`, `summary_line` | 1 | 本轮主索引，也是 agent 的第一入口 |
+| `source_health` | 一源一行 | `source_name`, `source_status`, `freshness_seconds`, `coverage_ratio`, `fallback_used`, `detail` | 10-30 | 判断本轮哪些证据可信、哪些源发生降级 |
+| `market_overview_evidence` | 一轮一行 | 指数分时摘要、涨跌分布、涨跌停结构、昨日涨停收益、市场宽度 | 1 | 给市场环境层提供底座，解释扩散/分化/修复/退潮 |
+| `market_fund_t1` | 一轮一行 | `trade_date`, `net_amount_1d`, `super_large_net_1d`, `large_order_net_1d`, `inflow_streak_days`, `outflow_streak_days` | 1 | 记录 T-1 市场资金背景，解释风险偏好和承接 |
+| `market_fund_intraday` | 一轮一行 | `snapshot_time`, `main_net_inflow`, `super_net`, `large_net`, `coverage_ratio` | 1 | 记录当轮盘中资金方向，补足实时承接判断 |
+| `style_ranking` | 一风格一行 | `style_name`, `style_rank`, `style_score`, `eq_return`, `up_ratio`, `strong_ratio`, `near_high_ratio`, `activity_ratio`, `evidence_text` | 6-12 | 给出大风格排序和判定证据 |
+| `market_change_vs_prev` | 一变化一行 | `change_type`, `object_name`, `prev_value`, `current_value`, `delta_value`, `impact_level` | 5-20 | 表达与上一轮相比到底发生了什么变化 |
+| `theme_evidence` | 一主题一行 | `meta_theme`, `theme_rank`, `theme_score`, `avg_return`, `strong_stock_count`, `concept_support_count`, `leader_symbol`, `laggard_symbol` | 10-30 | 主攻线层核心表，给 agent 看“市场在交易什么” |
+| `theme_concept_evidence` | 一主题概念一行 | `meta_theme`, `concept_name`, `concept_rank`, `change_pct`, `speed_1min`, `main_net_amount`, `limit_up_count`, `rising_count` | 30-150 | 解释某条主线是靠哪些 THS 概念支撑起来的 |
+| `theme_leader_stocks` | 一主题代表股一行 | `meta_theme`, `symbol`, `stock_name`, `pct_chg_prev_close`, `money_pace_ratio`, `main_net_inflow`, `theme_role` | 30-150 | 给出每条主线的代表股 / 中军 / 扩散票 |
+| `theme_laggard_stocks` | 一主题掉队股一行 | `meta_theme`, `symbol`, `stock_name`, `pct_chg_prev_close`, `range_position`, `price_flow_divergence_flag`, `risk_tag` | 10-80 | 识别主线内部开始掉队或转弱的股票 |
+| `theme_change_vs_prev` | 一主题变化一行 | `meta_theme`, `prev_rank`, `current_rank`, `score_delta`, `structure_delta`, `fund_delta` | 10-30 | 表达主线的强化 / 弱化 / 轮动 |
+| `stock_snapshot_full` | 一股一行 | 盘中行情、量价、资金、短中期收益、主题映射、候选状态、风险标签 | 5000+ | 全市场盘中主事实表，是所有下钻分析的底座 |
+| `stock_style_profile` | 一股一行 | 大小盘、容量、股息、估值、成长、质量、波动、复合风格标签 | 5000+ | 慢变量风格画像，解释“这只票本身是什么气质” |
+| `stock_fund_profile` | 一股一行 | `main_net_amount_1d`, `main_net_amount_3d_sum`, `main_net_amount_5d_sum`, `outflow_streak_days`, `flow_acceleration_3d`, `price_flow_divergence_flag` | 5000+ | 历史资金画像，解释资金持续性与价量背离 |
+| `stock_theme_mapping` | 一股多行 | `symbol`, `meta_theme`, `concept_name`, `theme_rank`, `concept_rank`, `is_primary_theme` | 10000-50000 | 解决一股多主题归属和主次归线问题 |
+| `focus_stock_evidence` | 一重点股一行 | `symbol`, `stock_name`, `role`, `display_bucket`, `confidence_score_raw`, `confidence_score_norm`, `best_meta_theme`, `best_concept`, `reason` | 10-50 | 给 agent 的重点股票主入口 |
+| `focus_stock_score_breakdown` | 一重点股模块一行 | `symbol`, `module_name`, `raw_score`, `max_raw_score`, `norm_score`, `status_label`, `evidence_text` | 60-400 | 把顺风 / 核心 / 补涨的评分拆开，避免黑箱总分 |
+| `focus_stock_risk_breakdown` | 一重点股风险项一行 | `symbol`, `risk_item`, `metric_value`, `threshold_value`, `risk_level`, `evidence_text` | 20-200 | 解释为什么过热、偏弱或不适合追 |
+| `focus_stock_research_hooks` | 一重点股研究钩子一行 | `symbol`, `hook_type`, `hook_value`, `source_ref`, `coverage_score` | 10-200 | 给 agent 补研究覆盖与信息充分度 |
+| `candidate_metadata_full` | 一重点股附加项一行 | `symbol`, `attribute_name`, `attribute_value`, `attribute_group` | 10-200 | 挂载额外元数据，避免主表无限膨胀 |
+| `run_artifact` | 一产物一行 | `artifact_name`, `artifact_format`, `content_level`, `relative_path`, `table_name`, `row_count`, `byte_size` | 5-30 | 记录这一轮到底产出了哪些文件和表，供 agent 索引 |
+
+### 7.3 Agent Read Protocol
+
+推荐固定读取顺序：
+
+1. `manifest.yaml`
+2. `run_context` + `source_health`
+3. `market_overview_evidence` + `style_ranking` + `theme_evidence`
+4. `focus_stock_evidence` + `focus_stock_score_breakdown` + `focus_stock_risk_breakdown`
+5. 必要时再读 `stock_snapshot_full`、`stock_style_profile`、`stock_fund_profile`
+6. 最后再读 `market_brief.md` / `analyst_output.md` / `reviewer_output.md`
+
+这不是为了压缩信息，而是为了让 agent 先抓大局，再看重点，再做下钻。
+
+### 7.4 Size Budget
+
+按当前字段密度估算：
+
+- `run_context` + `source_health` + market/theme 层通常小于 1 MB
+- `stock_snapshot_full` + `stock_style_profile` + `stock_fund_profile` 是主存量，通常 2 MB 到 8 MB
+- focus stock 层通常小于 1 MB
+
+因此单轮 `evidence.db` 控制在 3 MB 到 10 MB 是合理目标。
+
+## 8. Current Source of Truth
 
 这份文档是数据字典主入口，但以下文件仍然是各自层级的实现真相源：
 

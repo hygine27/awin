@@ -812,6 +812,61 @@ class OpportunityDiscoveryTestCase(unittest.TestCase):
         self.assertIn("300002.SZ", catchup_symbols)
         self.assertNotIn("300003.SZ", catchup_symbols)
 
+    def test_catchup_excludes_names_already_transitioning_into_secondary_momentum(self) -> None:
+        stock_master = [
+            StockMasterRow(symbol="300001.SZ", stock_code="300001", stock_name="主线核心", industry="软件服务", market="创业板"),
+            StockMasterRow(symbol="300002.SZ", stock_code="300002", stock_name="补涨早期", industry="软件服务", market="创业板"),
+            StockMasterRow(symbol="300003.SZ", stock_code="300003", stock_name="二线强化", industry="软件服务", market="创业板"),
+        ]
+        qmt_rows = [
+            QmtSnapshotRow(symbol="300001.SZ", stock_code="300001", trade_date="2026-04-16", snapshot_time="10:35:00", last_price=10.8, last_close=10.0, open_price=10.1, high_price=10.9, low_price=10.0, amount=1_600_000_000),
+            QmtSnapshotRow(symbol="300002.SZ", stock_code="300002", trade_date="2026-04-16", snapshot_time="10:35:00", last_price=10.32, last_close=10.0, open_price=10.0, high_price=10.35, low_price=9.95, amount=1_100_000_000),
+            QmtSnapshotRow(symbol="300003.SZ", stock_code="300003", trade_date="2026-04-16", snapshot_time="10:35:00", last_price=10.6, last_close=10.0, open_price=10.05, high_price=10.6, low_price=10.0, amount=2_400_000_000),
+        ]
+        dcf_rows = [
+            DcfSnapshotRow(symbol="300001.SZ", trade_date="2026-04-16", turnover_rate=0.06, volume_ratio=1.8, float_mkt_cap=12_000_000_000, main_net_inflow=160_000_000, super_net=80_000_000, large_net=40_000_000, ret_3d=0.08, ret_5d=0.06, ret_10d=0.18),
+            DcfSnapshotRow(symbol="300002.SZ", trade_date="2026-04-16", turnover_rate=0.04, volume_ratio=1.7, float_mkt_cap=8_000_000_000, main_net_inflow=90_000_000, super_net=30_000_000, large_net=18_000_000, ret_3d=0.03, ret_5d=0.04, ret_10d=0.08),
+            DcfSnapshotRow(symbol="300003.SZ", trade_date="2026-04-16", turnover_rate=0.08, volume_ratio=2.4, float_mkt_cap=9_000_000_000, main_net_inflow=220_000_000, super_net=100_000_000, large_net=60_000_000, ret_3d=0.07, ret_5d=0.08, ret_10d=0.18),
+        ]
+        ths_rows = [
+            ThsConceptRow(symbol="300001.SZ", stock_code="300001", concept_name="AI智能体", meta_theme="AI算力"),
+            ThsConceptRow(symbol="300002.SZ", stock_code="300002", concept_name="AI智能体", meta_theme="AI算力"),
+            ThsConceptRow(symbol="300002.SZ", stock_code="300002", concept_name="AI应用", meta_theme="AI算力"),
+            ThsConceptRow(symbol="300003.SZ", stock_code="300003", concept_name="AI智能体", meta_theme="AI算力"),
+            ThsConceptRow(symbol="300003.SZ", stock_code="300003", concept_name="AI应用", meta_theme="AI算力"),
+        ]
+        qmt_bar_rows = [
+            QmtBar1dRow(symbol=item.symbol, stock_code=item.stock_code, trade_date="2026-04-15", amount=2_000_000_000)
+            for item in stock_master
+        ]
+        research_rows = [
+            ResearchCoverageRow(symbol="300001.SZ", onepage_path="onepage-1.md", company_card_path="card-1.md", company_card_quality_score=0.5, research_coverage_score=0.7),
+            ResearchCoverageRow(symbol="300002.SZ", company_card_path="card-2.md", company_card_quality_score=0.6, research_coverage_score=0.45),
+            ResearchCoverageRow(symbol="300003.SZ", company_card_path="card-3.md", company_card_quality_score=0.6, research_coverage_score=0.45),
+        ]
+        facts = build_stock_facts(stock_master, qmt_rows, dcf_rows, qmt_bar_rows, ths_rows, research_rows)
+        market = MarketUnderstandingOutput(
+            confirmed_style="科技成长",
+            top_meta_themes=[MetaThemeItem(meta_theme="AI算力", rank=1, eq_return=0.03, strongest_concepts=["AI智能体", "AI应用"])],
+            strongest_concepts=["AI智能体", "算力租赁"],
+            acceleration_concepts=["AI应用"],
+            concept_overlay_score_map={"AI智能体": 0.84, "AI应用": 0.78},
+            concept_overlay_rank_map={"AI智能体": 1, "AI应用": 2},
+            meta_theme_rank_map={"AI算力": 1},
+            meta_theme_eq_return_map={"AI算力": 0.03},
+        )
+
+        output = compute_opportunity_discovery(facts, market, new_long_limit=3, catchup_limit=3)
+
+        catchup_symbols = [item.symbol for item in output.catchup_watchlist]
+        new_long_symbols = [item.symbol for item in output.new_long_watchlist]
+
+        self.assertIn("300002.SZ", catchup_symbols)
+        self.assertNotIn("300003.SZ", catchup_symbols)
+        self.assertIn("300003.SZ", new_long_symbols)
+        catchup_item = next(item for item in output.catchup_watchlist if item.symbol == "300002.SZ")
+        self.assertEqual(catchup_item.metadata.get("catchup_stage"), "early")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -73,6 +73,37 @@ python scripts/run_once.py \
   --dry-run
 ```
 
+这条命令当前会直接输出完整 `M0SnapshotBundle` JSON，其中除了：
+
+- `market_understanding`
+- `opportunity_discovery`
+- `risk_surveillance`
+- `alert_output`
+
+还会包含：
+
+- `market_evidence_bundle`
+- `stock_evidence_bundle`
+
+这两个 bundle 是下一阶段 Agent 消费的主入口，目的是让 agent 拿到结构化证据，而不是只拿最终摘要文案。
+
+如果只想给 Agent 一个更小的输入，可以加：
+
+```bash
+python scripts/run_once.py \
+  --trade-date 2026-04-18 \
+  --snapshot-time 10:35:00 \
+  --round-seq 1 \
+  --dry-run \
+  --evidence-only
+```
+
+这时只输出：
+
+- `run_context`
+- `market_evidence_bundle`
+- `stock_evidence_bundle`
+
 ### 2.2 正式生成并落库
 
 按指定交易日和时点生成一轮结果，并写入 SQLite：

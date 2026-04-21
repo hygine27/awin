@@ -66,9 +66,20 @@
       - 运行时并行策略已做一轮收口
         - 验证结论：`source_load` 层不适合粗粒度并发
         - 原因：远端 PostgreSQL 在多源并发拉取下明显退化，曾出现 `145.47s` 的失败性 profile
-        - 当前保留策略：
+      - 当前保留策略：
           - 数据源读取保持串行
           - 仅保留 `qmt_bar_1d_metrics` 与纯 Python 派生/分析阶段的安全并行
+- P0.4 Agent 证据交付契约
+  - 目标：把 `awin` 从“规则输出 + 文案摘要”推进到“SQLite 证据底座 + agent 分析层”
+  - 当前状态：已完成第一阶段
+  - 已完成内容：
+    - `docs/architecture.md` 已收口为 `artifact / evidence.db / memory promotion` 架构
+    - `docs/architecture/data-dictionary.md` 已新增 per-run evidence tables 定义、读取顺序和规模预算
+    - SQLite schema 已新增 `run_artifact` 索引表，用于记录每轮产出的 artifact / table
+  - 下一步：
+    - 真实将 `market_evidence_bundle / stock_evidence_bundle` 落地到 `evidence.db`
+    - 新增 `manifest.yaml`
+    - 补 `market_brief.md / analyst_output.md / reviewer_output.md` 的标准落地流程
 
 ## P0 Must Do
 
@@ -219,6 +230,13 @@
     - 当前最大慢点已不再是单一源，而是多源累积 + 本地构建过程
     - 下一步应从“单源替换”切到“继续压单源 SQL + 业务输出验收”，而不是继续扩大 source-level 并发
   - 验收标准：dry-run 成功输出，且 `source_health` 与预期一致
+- 跑通 per-run artifact 最小落地
+  - 目标：不止打印 runtime bundle，而是按 run 落 `manifest + evidence.db + digest`
+  - 当前状态：设计与 schema 骨架已完成，尚未落真正 artifact
+  - 验收标准：
+    - 每轮可看到标准目录 `data/runs/YYYY-MM-DD/<run_id>/`
+    - `run_artifact` 可索引该轮文件和表
+    - agent 可按 `manifest -> evidence.db -> markdown` 固定顺序读取
 - 检查 SQLite 落地
   - 目标：验证 `style_profile` 和新增资金画像表/字段真实可用
   - 验收标准：字段非空率、值域、样本分布符合预期

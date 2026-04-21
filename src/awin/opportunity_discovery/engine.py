@@ -54,6 +54,10 @@ NEGATIVE_MAIN_FLOW_CATCHUP_PENALTY = float(CATCHUP_RULES["negative_main_flow_cat
 NEGATIVE_RET3_CATCHUP_PENALTY = float(CATCHUP_RULES["negative_ret3_catchup_penalty"])
 FRESH_CATCHUP_DISCOVERY_BONUS = float(CATCHUP_RULES["fresh_catchup_discovery_bonus"])
 WEAK_REPEAT_NEW_LONG_CATCHUP_PENALTY = float(CATCHUP_RULES["weak_repeat_new_long_catchup_penalty"])
+CATCHUP_ALREADY_STRONG_RANGE_POSITION_MIN = 0.92
+CATCHUP_ALREADY_STRONG_PCT_MIN = 0.05
+CATCHUP_ALREADY_STRONG_RET_10D_MIN = 0.15
+CATCHUP_ALREADY_STRONG_MONEY_PACE_MIN = 1.8
 
 
 def _concept_priority(market: MarketUnderstandingOutput) -> dict[str, float]:
@@ -853,9 +857,23 @@ def compute_opportunity_discovery(
         )
         if tracking_text and "否" in tracking_text:
             catchup_score -= float(catchup_score_formula["tracking_block_penalty"])
+        already_strengthening = bool(
+            (
+                range_position >= CATCHUP_ALREADY_STRONG_RANGE_POSITION_MIN
+                and pct >= CATCHUP_ALREADY_STRONG_PCT_MIN
+                and money_pace_ratio >= CATCHUP_ALREADY_STRONG_MONEY_PACE_MIN
+            )
+            or (
+                range_position >= 0.95
+                and _safe(fact.ret_10d) >= CATCHUP_ALREADY_STRONG_RET_10D_MIN
+                and _safe(fact.main_net_inflow) > 0
+                and money_pace_ratio >= CATCHUP_ALREADY_STRONG_MONEY_PACE_MIN
+            )
+        )
         if (
             assigned_bucket != "core_anchor"
             and catchup_focus_support > 0
+            and not already_strengthening
             and float(catchup_candidate_rules["pct_min"]) <= pct < float(catchup_candidate_rules["pct_max"])
             and _safe(fact.ret_3d, -999.0) <= float(catchup_candidate_rules["ret_3d_max"])
             and _safe(fact.ret_5d, -999.0) <= float(catchup_candidate_rules["ret_5d_max"])
@@ -868,7 +886,7 @@ def compute_opportunity_discovery(
             and catchup_score >= float(catchup_candidate_rules["catchup_score_min"])
         ):
             reason = (
-                f"{best_theme or best_concept or '主线'}仍强，但近3/10日相对不算最热，"
+                f"{best_theme or best_concept or '主线'}仍强，但近3/10日相对不算最热，当前仍属补涨早期，"
                 f"当前资金节奏{money_pace_ratio:.2f}x，近3日{_fmt_pct(fact.ret_3d)} / 10日{_fmt_pct(fact.ret_10d)}"
             )
             catchup.append(
@@ -905,6 +923,7 @@ def compute_opportunity_discovery(
                             "negative_main_flow_penalty": round(negative_main_flow_penalty, 3),
                             "negative_ret3_penalty": round(negative_ret3_penalty, 3),
                             "fresh_catchup_discovery_bonus": round(fresh_catchup_discovery_bonus, 3),
+                            "catchup_stage": "early",
                         },
                     ),
                 )
